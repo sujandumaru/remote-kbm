@@ -51,8 +51,14 @@ can't drive your machine.
 | Pinch | Zoom (Ctrl + wheel) |
 | Double-tap then hold + drag | Click-and-drag |
 
-Bottom buttons and the keyboard panel (⌨) cover clicks, special keys, and Ctrl/Alt/Shift/Cmd
-combos (latch a modifier, then press a key).
+Cursor speed is adaptive: move slowly for precision, flick fast to cross the whole screen.
+Tune `GAIN_MIN` / `GAIN_MAX` / `ACCEL` at the top of the client script if it feels off.
+
+Bottom buttons and the keyboard panel (⌨) cover clicks, special keys, and modifier combos —
+latch Ctrl/Alt/Shift/Win, then press a key (e.g. Win then D shows the desktop). The text box
+shows what you type and mirrors edits (including autocorrect) to the PC; ✕ clears the box
+locally without sending anything. A shortcut row covers Start, Alt-Tab, Copy/Paste/Cut,
+Undo/Redo, Select-all, Save, Find, and Close-tab.
 
 ## OS notes
 

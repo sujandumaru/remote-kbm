@@ -25,8 +25,10 @@
   #clicks button { flex:1; padding:16px; }
   #kb { background:var(--pad); padding:8px; display:none; gap:8px; flex-direction:column; }
   #kb.show { display:flex; }
-  #kb input { font:16px system-ui; padding:12px; border-radius:9px; border:1px solid var(--pad2);
-              background:var(--bg); color:var(--fg); width:100%; }
+  #txtrow { display:flex; gap:8px; }
+  #txtrow textarea { flex:1; font:16px system-ui; padding:12px; border-radius:9px;
+                     border:1px solid var(--pad2); background:var(--bg); color:var(--fg); resize:none; }
+  #clr { padding:0 16px; }
   .keys { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; }
   .keys button { padding:12px 6px; }
   .mod.on { background:var(--accent); }
@@ -47,8 +49,12 @@
   </div>
 
   <div id="kb">
-    <input id="txt" type="text" autocomplete="off" autocorrect="off" autocapitalize="off"
-           spellcheck="false" placeholder="Type here — sends to the PC">
+    <div id="txtrow">
+      <textarea id="txt" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off"
+                spellcheck="false" aria-label="Text to send to the PC"
+                placeholder="Type here — mirrors to the PC"></textarea>
+      <button id="clr" title="Clear this echo (nothing sent)">✕</button>
+    </div>
     <div class="keys">
       <button data-k="esc">Esc</button><button data-k="tab">Tab</button>
       <button data-k="left">←</button><button data-k="up">↑</button>
@@ -56,7 +62,21 @@
       <button data-k="enter">Enter</button><button data-k="backspace">⌫</button>
       <button data-k="delete">Del</button>
       <button class="mod" data-mod="ctrl">Ctrl</button><button class="mod" data-mod="alt">Alt</button>
-      <button class="mod" data-mod="shift">Shift</button><button class="mod" data-mod="cmd">Cmd</button>
+      <button class="mod" data-mod="shift">Shift</button>
+    </div>
+    <div class="keys">
+      <button class="mod" data-mod="cmd">⊞ Win</button>
+      <button data-combo="cmd">⊞ Start</button>
+      <button data-combo="alt+tab">Alt↹Tab</button>
+      <button data-combo="ctrl+c">Copy</button>
+      <button data-combo="ctrl+v">Paste</button>
+      <button data-combo="ctrl+x">Cut</button>
+      <button data-combo="ctrl+z">Undo</button>
+      <button data-combo="ctrl+y">Redo</button>
+      <button data-combo="ctrl+a">All</button>
+      <button data-combo="ctrl+s">Save</button>
+      <button data-combo="ctrl+f">Find</button>
+      <button data-combo="ctrl+w">Close</button>
     </div>
   </div>
 
@@ -75,7 +95,9 @@ function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
 connect();
 
 // ---- trackpad ---------------------------------------------------------------
-const GAIN = 1.6, TAP_MS = 250, TAP_PX = 10, DBL_MS = 300;
+// Trackpad-style acceleration: slow finger stays precise, fast flick crosses the screen.
+const GAIN_MIN = 1.6, GAIN_MAX = 5.0, ACCEL = 0.10;
+const TAP_MS = 250, TAP_PX = 10, DBL_MS = 300;
 const SCROLL_PX = 16, ZOOM_PX = 55, ACTIVATE_PX = 8, NATURAL = true;
 const pad = document.getElementById("pad");
 const pts = new Map();               // pointerId -> {x,y,px,py}
@@ -105,7 +127,10 @@ pad.addEventListener("pointermove", e => {
     const dx = p.x - p.px, dy = p.y - p.py; p.px = p.x; p.py = p.y;
     g.moved += Math.hypot(dx, dy);
     if (armedDrag && g.moved > TAP_PX) { send({ t: "press", b: "left" }); dragging = true; armedDrag = false; }
-    if (dx || dy) send({ t: "move", dx: Math.round(dx * GAIN), dy: Math.round(dy * GAIN) });
+    if (dx || dy) {
+      const gain = Math.min(GAIN_MIN + Math.hypot(dx, dy) * ACCEL, GAIN_MAX);
+      send({ t: "move", dx: Math.round(dx * gain), dy: Math.round(dy * gain) });
+    }
   } else if (pts.size >= 2) {
     const c = centroid(), a = [...pts.values()], d = dist(a[0], a[1]);
     const dcx = c.x - lastCentroid.x, dcy = c.y - lastCentroid.y, dd = d - lastDist;
@@ -148,26 +173,42 @@ document.getElementById("kbtoggle").onclick = () => { kb.classList.toggle("show"
 
 function clearMods() { mods.clear(); document.querySelectorAll(".mod").forEach(b => b.classList.remove("on")); }
 
-// Mobile IMEs make keydown/keyCode unreliable; read intent from beforeinput.
+// The field keeps what you type (visible echo); edits are mirrored to the PC by
+// diffing values on input events — mobile IMEs make keydown/keyCode unreliable.
+let lastVal = "";
+
 txt.addEventListener("beforeinput", e => {
   const it = e.inputType;
-  if (it === "insertText" && e.data != null) {
-    if (mods.size) { send({ t: "key", k: e.data.slice(-1), mods: [...mods] }); clearMods(); }
-    else send({ t: "text", s: e.data });
-  } else if (it === "insertLineBreak" || it === "insertParagraph") {
+  if (it === "insertLineBreak" || it === "insertParagraph") {
+    e.preventDefault();                       // textarea fires this reliably for Enter
     send({ t: "key", k: "enter", mods: [...mods] }); clearMods();
-  } else if (it === "deleteContentBackward") {
-    send({ t: "key", k: "backspace" });
-  } else if (it === "deleteContentForward") {
-    send({ t: "key", k: "delete" });
+  } else if (mods.size && it === "insertText" && e.data) {
+    e.preventDefault();                       // latched modifier: send as combo, skip echo
+    send({ t: "key", k: e.data.slice(-1), mods: [...mods] }); clearMods();
   }
-  e.preventDefault();          // keep the field empty so state never desyncs
 });
-txt.addEventListener("input", () => { txt.value = ""; });
+
+txt.addEventListener("input", () => {
+  const v = txt.value;
+  let p = 0;                                  // common prefix; handles autocorrect rewrites too
+  while (p < lastVal.length && p < v.length && lastVal[p] === v[p]) p++;
+  for (let i = 0; i < lastVal.length - p; i++) send({ t: "key", k: "backspace" });
+  if (p < v.length) send({ t: "text", s: v.slice(p) });
+  lastVal = v;
+});
+
+// ponytail: empty-field backspace produces no input event; keydown catches it on iOS
+// and most Android IMEs — the few that report 229 here simply can't do this one case.
+txt.addEventListener("keydown", e => {
+  if (e.key === "Backspace" && txt.value === "") send({ t: "key", k: "backspace" });
+});
+
+document.getElementById("clr").onclick = () => { txt.value = ""; lastVal = ""; txt.focus(); };
 
 document.querySelectorAll(".keys button").forEach(b => {
   b.onclick = () => {
     if (b.dataset.mod) { mods.has(b.dataset.mod) ? mods.delete(b.dataset.mod) : mods.add(b.dataset.mod); b.classList.toggle("on"); txt.focus(); return; }
+    if (b.dataset.combo) { const parts = b.dataset.combo.split("+"); const k = parts.pop(); send({ t: "key", k, mods: parts }); return; }
     send({ t: "key", k: b.dataset.k, mods: [...mods] }); clearMods(); txt.focus();
   };
 });
