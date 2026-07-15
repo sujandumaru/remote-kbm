@@ -62,7 +62,15 @@ def main():
     app = web.Application()
     app.add_routes([web.get("/", index), web.get("/ws", ws_handler)])
     url = f"http://{lan_ip()}:{PORT}/?k={TOKEN}"
-    print("\n  Open this on your phone (same WiFi):\n\n    " + url + "\n", flush=True)
+    print("\n  Scan this on your phone (same WiFi), or open the URL:\n", flush=True)
+    try:
+        import qrcode
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(url)
+        qr.print_ascii(invert=True)   # invert suits dark terminals; drop it on a light one
+    except ImportError:
+        pass                          # QR is optional; the URL below is enough
+    print("\n    " + url + "\n", flush=True)
     web.run_app(app, port=PORT, print=None)
 
 

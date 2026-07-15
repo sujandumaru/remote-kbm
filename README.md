@@ -15,15 +15,30 @@ because it is just a web page over WiFi.
 
 ## Setup
 
+Run the agent on the **native OS of the machine you want to control** — the same box, directly.
+
+**Windows** (PowerShell):
+```powershell
+py -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python server\main.py
+```
+
+**macOS / Linux**:
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python server/main.py
 ```
 
-The agent prints a URL like `http://192.168.1.23:8765/?k=XXXX`. Open it on a phone that is on
-the **same WiFi**. The status dot turns green when connected. The `?k=` token gates access so a
-random device on the network can't drive your machine.
+The agent prints a **QR code** plus a URL like `http://192.168.1.23:8765/?k=XXXX`. Scan the QR
+with your phone camera (or type the URL) — the phone must be on the **same WiFi**. The status
+dot turns green when connected. The `?k=` token gates access so a random device on the network
+can't drive your machine.
+
+> **Do not run the agent inside WSL.** WSL2 uses a NAT network (its `172.x` IP is unreachable
+> from your phone) *and* pynput there controls the WSLg Linux display, not the real Windows
+> desktop. To control Windows, install Python on Windows and run it from PowerShell as above.
 
 ## Gestures
 
