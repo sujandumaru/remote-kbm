@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>remote-kbm</title>
+<style>
+  :root { --bg:#111418; --pad:#1b2027; --pad2:#232a33; --fg:#e8ecf1; --dim:#8b95a1; --accent:#3d7dfb; }
+  * { box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; overflow:hidden; overscroll-behavior:none;
+              background:var(--bg); color:var(--fg); font:15px/1.3 system-ui,sans-serif; }
+  body { display:flex; flex-direction:column; height:100dvh; }
+  #bar { display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--pad); }
+  #dot { width:11px; height:11px; border-radius:50%; background:#e0483d; transition:background .2s; }
+  #dot.on { background:#37c26b; }
+  #bar .grow { flex:1; }
+  button { font:inherit; color:var(--fg); background:var(--pad2); border:0; border-radius:9px;
+           padding:11px 14px; cursor:pointer; }
+  button:active { background:#2f3946; }
+  #pad { flex:1; touch-action:none; position:relative; background:var(--bg);
+         background-image:radial-gradient(var(--pad2) 1px, transparent 1px); background-size:22px 22px; }
+  #hint { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+          color:var(--dim); text-align:center; padding:24px; pointer-events:none; }
+  #clicks { display:flex; gap:8px; padding:8px 8px 10px; }
+  #clicks button { flex:1; padding:16px; }
+  #kb { background:var(--pad); padding:8px; display:none; gap:8px; flex-direction:column; }
+  #kb.show { display:flex; }
+  #kb input { font:16px system-ui; padding:12px; border-radius:9px; border:1px solid var(--pad2);
+              background:var(--bg); color:var(--fg); width:100%; }
+  .keys { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; }
+  .keys button { padding:12px 6px; }
+  .mod.on { background:var(--accent); }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <span id="dot"></span><span id="stat">connecting…</span>
+    <span class="grow"></span>
+    <button id="kbtoggle">⌨ Keyboard</button>
+  </div>
+
+  <div id="pad"><div id="hint">Drag to move · tap = click · two-finger tap = right-click<br>two-finger drag = scroll · pinch = zoom · double-tap-hold = drag</div></div>
+
+  <div id="clicks">
+    <button id="lclick">Left click</button>
+    <button id="rclick">Right click</button>
+  </div>
+
+  <div id="kb">
+    <input id="txt" type="text" autocomplete="off" autocorrect="off" autocapitalize="off"
+           spellcheck="false" placeholder="Type here — sends to the PC">
+    <div class="keys">
+      <button data-k="esc">Esc</button><button data-k="tab">Tab</button>
+      <button data-k="left">←</button><button data-k="up">↑</button>
+      <button data-k="down">↓</button><button data-k="right">→</button>
+      <button data-k="enter">Enter</button><button data-k="backspace">⌫</button>
+      <button data-k="delete">Del</button>
+      <button class="mod" data-mod="ctrl">Ctrl</button><button class="mod" data-mod="alt">Alt</button>
+      <button class="mod" data-mod="shift">Shift</button><button class="mod" data-mod="cmd">Cmd</button>
+    </div>
+  </div>
+
+<script>
+// ---- connection -------------------------------------------------------------
+const token = new URLSearchParams(location.search).get("k") || "";
+const dot = document.getElementById("dot"), stat = document.getElementById("stat");
+let ws;
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws?k=${encodeURIComponent(token)}`);
+  ws.onopen  = () => { dot.classList.add("on");  stat.textContent = "connected"; };
+  ws.onclose = () => { dot.classList.remove("on"); stat.textContent = "disconnected"; setTimeout(connect, 1000); };
+  ws.onerror = () => ws.close();
+}
+function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+connect();
+
+// ---- trackpad ---------------------------------------------------------------
+const GAIN = 1.6, TAP_MS = 250, TAP_PX = 10, DBL_MS = 300;
+const SCROLL_PX = 16, ZOOM_PX = 55, ACTIVATE_PX = 8, NATURAL = true;
+const pad = document.getElementById("pad");
+const pts = new Map();               // pointerId -> {x,y,px,py}
+let g = null;                        // current gesture aggregate
+let lastTapUp = 0, dragging = false, armedDrag = false;
+let lastCentroid = null, lastDist = 0, twoMode = null, scrollAcc = 0, panAcc = 0, zoomAcc = 0;
+
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function centroid() { let x = 0, y = 0; for (const p of pts.values()) { x += p.x; y += p.y; } return { x: x / pts.size, y: y / pts.size }; }
+
+pad.addEventListener("pointerdown", e => {
+  pad.setPointerCapture(e.pointerId);
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY, px: e.clientX, py: e.clientY });
+  if (pts.size === 1) {
+    g = { start: performance.now(), maxN: 1, moved: 0 };
+    armedDrag = (performance.now() - lastTapUp) < DBL_MS;   // double-tap...hold -> drag
+  }
+  g.maxN = Math.max(g.maxN, pts.size);
+  if (pts.size === 2) { lastCentroid = centroid(); const a = [...pts.values()]; lastDist = dist(a[0], a[1]); twoMode = null; scrollAcc = panAcc = zoomAcc = 0; }
+});
+
+pad.addEventListener("pointermove", e => {
+  const p = pts.get(e.pointerId); if (!p) return;
+  p.x = e.clientX; p.y = e.clientY;
+
+  if (pts.size === 1) {
+    const dx = p.x - p.px, dy = p.y - p.py; p.px = p.x; p.py = p.y;
+    g.moved += Math.hypot(dx, dy);
+    if (armedDrag && g.moved > TAP_PX) { send({ t: "press", b: "left" }); dragging = true; armedDrag = false; }
+    if (dx || dy) send({ t: "move", dx: Math.round(dx * GAIN), dy: Math.round(dy * GAIN) });
+  } else if (pts.size >= 2) {
+    const c = centroid(), a = [...pts.values()], d = dist(a[0], a[1]);
+    const dcx = c.x - lastCentroid.x, dcy = c.y - lastCentroid.y, dd = d - lastDist;
+    lastCentroid = c; lastDist = d; g.moved += Math.hypot(dcx, dcy) + Math.abs(dd);
+    if (!twoMode) { if (Math.abs(dd) > ACTIVATE_PX) twoMode = "zoom"; else if (Math.hypot(dcx, dcy) > ACTIVATE_PX) twoMode = "scroll"; }
+    if (twoMode === "scroll") {
+      scrollAcc += dcy; panAcc += dcx;
+      while (Math.abs(scrollAcc) >= SCROLL_PX) { const s = Math.sign(scrollAcc); send({ t: "scroll", dx: 0, dy: NATURAL ? s : -s }); scrollAcc -= s * SCROLL_PX; }
+      while (Math.abs(panAcc) >= SCROLL_PX) { const s = Math.sign(panAcc); send({ t: "scroll", dx: NATURAL ? s : -s, dy: 0 }); panAcc -= s * SCROLL_PX; }
+    } else if (twoMode === "zoom") {
+      zoomAcc += dd;
+      while (Math.abs(zoomAcc) >= ZOOM_PX) { const s = Math.sign(zoomAcc); send({ t: "zoom", d: s }); zoomAcc -= s * ZOOM_PX; }
+    }
+  }
+});
+
+function endPointer(e) {
+  if (!pts.has(e.pointerId)) return;
+  pts.delete(e.pointerId);
+  if (pts.size === 1) { const p = [...pts.values()][0]; p.px = p.x; p.py = p.y; }  // avoid jump on 2->1
+  if (pts.size > 0) return;                                // gesture not finished
+  const dur = performance.now() - g.start;
+  if (dragging) { send({ t: "release", b: "left" }); dragging = false; }
+  else if (g.moved < TAP_PX && dur < TAP_MS) {
+    if (g.maxN === 1) { send({ t: "click", b: "left", n: 1 }); lastTapUp = performance.now(); }
+    else if (g.maxN === 2) send({ t: "click", b: "right", n: 1 });
+  }
+  armedDrag = false; g = null;
+}
+pad.addEventListener("pointerup", endPointer);
+pad.addEventListener("pointercancel", endPointer);
+
+document.getElementById("lclick").onclick = () => send({ t: "click", b: "left",  n: 1 });
+document.getElementById("rclick").onclick = () => send({ t: "click", b: "right", n: 1 });
+
+// ---- keyboard ---------------------------------------------------------------
+const kb = document.getElementById("kb"), txt = document.getElementById("txt");
+const mods = new Set();
+document.getElementById("kbtoggle").onclick = () => { kb.classList.toggle("show"); if (kb.classList.contains("show")) txt.focus(); };
+
+function clearMods() { mods.clear(); document.querySelectorAll(".mod").forEach(b => b.classList.remove("on")); }
+
+// Mobile IMEs make keydown/keyCode unreliable; read intent from beforeinput.
+txt.addEventListener("beforeinput", e => {
+  const it = e.inputType;
+  if (it === "insertText" && e.data != null) {
+    if (mods.size) { send({ t: "key", k: e.data.slice(-1), mods: [...mods] }); clearMods(); }
+    else send({ t: "text", s: e.data });
+  } else if (it === "insertLineBreak" || it === "insertParagraph") {
+    send({ t: "key", k: "enter", mods: [...mods] }); clearMods();
+  } else if (it === "deleteContentBackward") {
+    send({ t: "key", k: "backspace" });
+  } else if (it === "deleteContentForward") {
+    send({ t: "key", k: "delete" });
+  }
+  e.preventDefault();          // keep the field empty so state never desyncs
+});
+txt.addEventListener("input", () => { txt.value = ""; });
+
+document.querySelectorAll(".keys button").forEach(b => {
+  b.onclick = () => {
+    if (b.dataset.mod) { mods.has(b.dataset.mod) ? mods.delete(b.dataset.mod) : mods.add(b.dataset.mod); b.classList.toggle("on"); txt.focus(); return; }
+    send({ t: "key", k: b.dataset.k, mods: [...mods] }); clearMods(); txt.focus();
+  };
+});
+</script>
+</body>
+</html>
