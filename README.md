@@ -34,7 +34,12 @@ python3 -m venv .venv
 The agent prints a **QR code** plus a URL like `http://192.168.1.23:8765/?k=XXXX`. Scan the QR
 with your phone camera (or type the URL) — the phone must be on the **same WiFi**. The status
 dot turns green when connected. The `?k=` token gates access so a random device on the network
-can't drive your machine.
+can't drive your machine. The token is saved to `~/.remote-kbm-token` so it survives agent
+restarts (delete that file to rotate it).
+
+**Install as an app:** open the page, then use the browser menu → *Add to Home Screen*
+(Android Chrome: *Install app*). It launches fullscreen with its own icon, and remembers the
+token — no rescanning. While you use it, the page keeps your phone screen awake.
 
 > **Do not run the agent inside WSL.** WSL2 uses a NAT network (its `172.x` IP is unreachable
 > from your phone) *and* pynput there controls the WSLg Linux display, not the real Windows
@@ -58,7 +63,8 @@ Bottom buttons and the keyboard panel (⌨) cover clicks, special keys, and modi
 latch Ctrl/Alt/Shift/Win, then press a key (e.g. Win then D shows the desktop). The text box
 shows what you type and mirrors edits (including autocorrect) to the PC; ✕ clears the box
 locally without sending anything. A shortcut row covers Start, Alt-Tab, Copy/Paste/Cut,
-Undo/Redo, Select-all, Save, Find, and Close-tab.
+Undo/Redo, Select-all, Save, Find, and Close-tab, and a media row covers volume and
+play/pause/next/previous.
 
 ## OS notes
 

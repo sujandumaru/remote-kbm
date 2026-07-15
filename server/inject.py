@@ -24,6 +24,9 @@ SPECIAL = {
     "backspace": Key.backspace, "delete": Key.delete, "space": Key.space,
     "up": Key.up, "down": Key.down, "left": Key.left, "right": Key.right,
     "home": Key.home, "end": Key.end, "page_up": Key.page_up, "page_down": Key.page_down,
+    "media_play_pause": Key.media_play_pause, "media_previous": Key.media_previous,
+    "media_next": Key.media_next, "media_volume_mute": Key.media_volume_mute,
+    "media_volume_down": Key.media_volume_down, "media_volume_up": Key.media_volume_up,
     **MODS,
     **{f"f{i}": getattr(Key, f"f{i}") for i in range(1, 13)},
 }
@@ -118,6 +121,10 @@ def _selfcheck():
 
     handle({"t": "key", "k": "a"})  # plain char passes through
     assert keyboard.calls[-2:] == [("press", "a"), ("release", "a")]
+
+    handle({"t": "key", "k": "media_volume_up"})
+    assert keyboard.calls[-2:] == [
+        ("press", Key.media_volume_up), ("release", Key.media_volume_up)]
 
     handle({"t": "key", "k": "c", "mods": ["ctrl"]})
     assert keyboard.calls[-4:] == [

@@ -1,0 +1,13 @@
+{
+  "name": "remote-kbm",
+  "short_name": "remote-kbm",
+  "description": "Phone trackpad and keyboard for your PC",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#111418",
+  "theme_color": "#1b2027",
+  "icons": [
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
