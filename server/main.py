@@ -2,6 +2,7 @@
 
 Run: python server/main.py    (see plans/01-mvp.md / README.md)
 """
+import asyncio
 import hmac
 import json
 import logging
@@ -97,8 +98,23 @@ async def ws_handler(request):
     return ws
 
 
+async def quiet_disconnects(app):
+    # Browsers open speculative connections and reset them; Windows' proactor loop
+    # logs every reset as an "Exception in callback" (WinError 10054). Cosmetic —
+    # swallow just those, let every other loop error stay loud.
+    loop = asyncio.get_running_loop()
+
+    def handler(lp, ctx):
+        if isinstance(ctx.get("exception"), (ConnectionResetError, ConnectionAbortedError)):
+            return
+        lp.default_exception_handler(ctx)
+
+    loop.set_exception_handler(handler)
+
+
 def main():
     app = web.Application()
+    app.on_startup.append(quiet_disconnects)
     app.add_routes([web.get("/", index), web.get("/ws", ws_handler),
                     web.get("/manifest.json", manifest), web.get("/icon.png", icon),
                     web.get("/ping", ping)])
