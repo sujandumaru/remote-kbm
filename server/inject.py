@@ -144,13 +144,14 @@ def _selfcheck():
     handle({"t": "move", "dx": 100, "dy": -5})
     assert mouse.calls[-1] == ("move", 100, -5)
 
-    # absolute-coord normalization (Windows cursor-reveal path): corners and centre of 1920x1080
+    # abs-coord normalization. The screen sizes below are ARBITRARY EXAMPLE INPUTS for the
+    # math only — at runtime move_rel() reads the real geometry from GetSystemMetrics, so any
+    # resolution/monitor works. Case 1: corners & centre of an example 1920x1080 display.
     assert _abs_coords(0, 0, 0, 0, 0, 0, 1920, 1080) == (0, 0)
     assert _abs_coords(1919, 1079, 0, 0, 0, 0, 1920, 1080) == (65535, 65535)
     assert _abs_coords(900, 500, 60, 40, 0, 0, 1920, 1080) == (32785, 32798)
-    # second monitor to the left (negative virtual origin) still maps into range
-    ax, ay = _abs_coords(-1920, 0, 0, 0, -1920, 0, 3840, 1080)
-    assert (ax, ay) == (0, 0)
+    # Case 2: a second monitor left of primary (negative virtual origin) still maps into range.
+    assert _abs_coords(-1920, 0, 0, 0, -1920, 0, 3840, 1080) == (0, 0)
 
     handle({"t": "click", "b": "left", "n": 2})
     assert mouse.calls[-1] == ("click", Button.left, 2)
