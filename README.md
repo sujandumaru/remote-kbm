@@ -62,12 +62,12 @@ app.
 Cursor speed is adaptive: move slowly for precision, flick fast to cross the whole screen.
 Tune `GAIN_MIN` / `GAIN_MAX` / `ACCEL` at the top of the client script if it feels off.
 
-Bottom buttons and the keyboard panel (⌨) cover clicks, special keys, and modifier combos —
-latch Ctrl/Alt/Shift/Win, then press a key (e.g. Win then D shows the desktop). The text box
-shows what you type and mirrors edits (including autocorrect) to the PC; ✕ clears the box
-locally without sending anything. A shortcut row covers Start, Alt-Tab, Copy/Paste/Cut,
-Undo/Redo, Select-all, Save, Find, and Close-tab, and a media row covers volume and
-play/pause/next/previous.
+Bottom buttons and the keyboard panel (⌨) cover clicks, special keys, and shortcuts. The panel
+has four tabs: **Type** (text box + Esc/Tab/arrows/Enter/⌫/Del and latching Ctrl/Alt/Shift/Win
+modifiers — latch one, then press a key), **Shortcuts** (Start, Alt-Tab, Copy/Paste/Cut,
+Undo/Redo, All, Save, Find, Close, Show-desktop), **Media** (volume, play/pause/next/previous),
+and **Fn** (F1–F12). The text box shows what you type and mirrors edits (including autocorrect)
+to the PC; ✕ clears the box locally without sending anything.
 
 ## OS notes
 

@@ -35,6 +35,11 @@
   #txtrow textarea { flex:1; font:16px system-ui; padding:12px; border-radius:9px;
                      border:1px solid var(--pad2); background:var(--bg); color:var(--fg); resize:none; }
   #clr { padding:0 16px; }
+  #tabs { display:flex; gap:6px; }
+  #tabs .tab { flex:1; padding:10px 4px; background:var(--bg); color:var(--dim); }
+  #tabs .tab.on { background:var(--pad2); color:var(--fg); }
+  .panel { display:flex; flex-direction:column; gap:8px; }
+  .panel[hidden] { display:none; }
   .keys { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; }
   .keys button { padding:12px 6px; }
   .mod.on { background:var(--accent); }
@@ -55,42 +60,69 @@
   </div>
 
   <div id="kb">
-    <div id="txtrow">
-      <textarea id="txt" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off"
-                spellcheck="false" aria-label="Text to send to the PC"
-                placeholder="Type here — mirrors to the PC"></textarea>
-      <button id="clr" title="Clear this echo (nothing sent)">✕</button>
+    <div id="tabs">
+      <button class="tab on" data-tab="type">Type</button>
+      <button class="tab" data-tab="shortcuts">Shortcuts</button>
+      <button class="tab" data-tab="media">Media</button>
+      <button class="tab" data-tab="fn">Fn</button>
     </div>
-    <div class="keys">
-      <button data-k="esc">Esc</button><button data-k="tab">Tab</button>
-      <button data-k="left">←</button><button data-k="up">↑</button>
-      <button data-k="down">↓</button><button data-k="right">→</button>
-      <button data-k="enter">Enter</button><button data-k="backspace">⌫</button>
-      <button data-k="delete">Del</button>
-      <button class="mod" data-mod="ctrl">Ctrl</button><button class="mod" data-mod="alt">Alt</button>
-      <button class="mod" data-mod="shift">Shift</button>
+
+    <div class="panel" data-panel="type">
+      <div id="txtrow">
+        <textarea id="txt" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off"
+                  spellcheck="false" aria-label="Text to send to the PC"
+                  placeholder="Type here — mirrors to the PC"></textarea>
+        <button id="clr" title="Clear this echo (nothing sent)">✕</button>
+      </div>
+      <div class="keys">
+        <button data-k="esc">Esc</button><button data-k="tab">Tab</button>
+        <button data-k="left">←</button><button data-k="up">↑</button>
+        <button data-k="down">↓</button><button data-k="right">→</button>
+        <button data-k="enter">Enter</button><button data-k="backspace">⌫</button>
+        <button data-k="delete">Del</button>
+        <button class="mod" data-mod="ctrl">Ctrl</button><button class="mod" data-mod="alt">Alt</button>
+        <button class="mod" data-mod="shift">Shift</button>
+        <button class="mod" data-mod="cmd">⊞ Win</button>
+      </div>
     </div>
-    <div class="keys">
-      <button class="mod" data-mod="cmd">⊞ Win</button>
-      <button data-combo="cmd">⊞ Start</button>
-      <button data-combo="alt+tab">Alt↹Tab</button>
-      <button data-combo="ctrl+c">Copy</button>
-      <button data-combo="ctrl+v">Paste</button>
-      <button data-combo="ctrl+x">Cut</button>
-      <button data-combo="ctrl+z">Undo</button>
-      <button data-combo="ctrl+y">Redo</button>
-      <button data-combo="ctrl+a">All</button>
-      <button data-combo="ctrl+s">Save</button>
-      <button data-combo="ctrl+f">Find</button>
-      <button data-combo="ctrl+w">Close</button>
+
+    <div class="panel" data-panel="shortcuts" hidden>
+      <div class="keys">
+        <button data-combo="cmd">⊞ Start</button>
+        <button data-combo="alt+tab">Alt↹Tab</button>
+        <button data-combo="ctrl+c">Copy</button>
+        <button data-combo="ctrl+v">Paste</button>
+        <button data-combo="ctrl+x">Cut</button>
+        <button data-combo="ctrl+z">Undo</button>
+        <button data-combo="ctrl+y">Redo</button>
+        <button data-combo="ctrl+a">All</button>
+        <button data-combo="ctrl+s">Save</button>
+        <button data-combo="ctrl+f">Find</button>
+        <button data-combo="ctrl+w">Close</button>
+        <button data-combo="cmd+d">Desktop</button>
+      </div>
     </div>
-    <div class="keys">
-      <button data-k="media_volume_mute">🔇</button>
-      <button data-k="media_volume_down">🔉</button>
-      <button data-k="media_volume_up">🔊</button>
-      <button data-k="media_previous">⏮</button>
-      <button data-k="media_play_pause">⏯</button>
-      <button data-k="media_next">⏭</button>
+
+    <div class="panel" data-panel="media" hidden>
+      <div class="keys">
+        <button data-k="media_volume_mute">🔇</button>
+        <button data-k="media_volume_down">🔉</button>
+        <button data-k="media_volume_up">🔊</button>
+        <button data-k="media_previous">⏮</button>
+        <button data-k="media_play_pause">⏯</button>
+        <button data-k="media_next">⏭</button>
+      </div>
+    </div>
+
+    <div class="panel" data-panel="fn" hidden>
+      <div class="keys">
+        <button data-k="f1">F1</button><button data-k="f2">F2</button>
+        <button data-k="f3">F3</button><button data-k="f4">F4</button>
+        <button data-k="f5">F5</button><button data-k="f6">F6</button>
+        <button data-k="f7">F7</button><button data-k="f8">F8</button>
+        <button data-k="f9">F9</button><button data-k="f10">F10</button>
+        <button data-k="f11">F11</button><button data-k="f12">F12</button>
+      </div>
     </div>
   </div>
 
@@ -229,6 +261,12 @@ document.getElementById("rclick").onclick = () => send({ t: "click", b: "right",
 const kb = document.getElementById("kb"), txt = document.getElementById("txt");
 const mods = new Set();
 document.getElementById("kbtoggle").onclick = () => { kb.classList.toggle("show"); if (kb.classList.contains("show")) txt.focus(); };
+
+document.querySelectorAll("#tabs .tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll("#tabs .tab").forEach(x => x.classList.toggle("on", x === t));
+  document.querySelectorAll(".panel").forEach(p => p.hidden = p.dataset.panel !== t.dataset.tab);
+  if (t.dataset.tab === "type") txt.focus();
+});
 
 function clearMods() { mods.clear(); document.querySelectorAll(".mod").forEach(b => b.classList.remove("on")); }
 

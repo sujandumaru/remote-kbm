@@ -6,6 +6,7 @@ the bottom can swap in recording stubs and run headless.
 """
 import contextlib
 import logging
+import sys
 
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
@@ -14,6 +15,38 @@ log = logging.getLogger("inject")
 
 mouse = MouseController()
 keyboard = KeyboardController()
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    # pynput moves the cursor with SetCursorPos, which repositions it but leaves it
+    # HIDDEN when Windows last saw touch/keyboard input. A relative SendInput move
+    # counts as real mouse-device input, so the pointer becomes visible again.
+    class _MOUSEINPUT(ctypes.Structure):
+        _fields_ = (("dx", wintypes.LONG), ("dy", wintypes.LONG),
+                    ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t))
+
+    class _INPUT(ctypes.Structure):
+        class _U(ctypes.Union):
+            _fields_ = (("mi", _MOUSEINPUT),)
+        _anonymous_ = ("u",)
+        _fields_ = (("type", wintypes.DWORD), ("u", _U))
+
+    _user32 = ctypes.windll.user32
+    _user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int)
+    _user32.SendInput.restype = wintypes.UINT
+    _MOUSEEVENTF_MOVE = 0x0001
+
+    def move_rel(dx, dy):
+        inp = _INPUT()
+        inp.type = 0  # INPUT_MOUSE
+        inp.mi = _MOUSEINPUT(dx, dy, 0, _MOUSEEVENTF_MOVE, 0, 0)
+        _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+else:
+    def move_rel(dx, dy):
+        mouse.move(dx, dy)
 
 BUTTONS = {"left": Button.left, "right": Button.right, "middle": Button.middle}
 
@@ -49,7 +82,7 @@ def handle(msg):
     t = msg.get("t")
     try:
         if t == "move":
-            mouse.move(int(msg["dx"]), int(msg["dy"]))
+            move_rel(int(msg["dx"]), int(msg["dy"]))
         elif t == "click":
             mouse.click(BUTTONS[msg["b"]], int(msg.get("n", 1)))
         elif t == "press":
