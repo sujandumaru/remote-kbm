@@ -17,25 +17,55 @@ because it is just a web page over WiFi.
 
 Run the agent on the **native OS of the machine you want to control** — the same box, directly.
 
-**Windows** (PowerShell):
-```powershell
-py -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python server\main.py
-```
+> **Do not run the agent inside WSL.** WSL2 uses a NAT network (its `172.x` IP is unreachable
+> from your phone) *and* pynput there controls the WSLg Linux display, not the real Windows
+> desktop. To control Windows, run it from **Windows** PowerShell, not the Ubuntu shell — see below.
 
-**macOS / Linux**:
+### Run on Windows
+
+1. **Install Python once** if `py --version` in PowerShell fails — get it from the Microsoft
+   Store (search "Python") or [python.org](https://www.python.org/downloads/windows/) (tick
+   *Add python.exe to PATH*).
+
+2. **Open PowerShell** (Start → type "PowerShell"). This is the Windows shell, *not* the Ubuntu
+   window. Then install the deps and run — pick the case that matches where the code lives:
+
+   **If the project folder is on Windows** (copied or `git clone`d):
+   ```powershell
+   cd C:\path\to\remote-kbm
+   py -m venv .venv
+   .venv\Scripts\pip install -r requirements.txt
+   .venv\Scripts\python server\main.py
+   ```
+
+   **If the project lives in WSL** (you edit it in Linux but want to control Windows) — run it
+   straight from the `\\wsl$` path; no venv or copying needed:
+   ```powershell
+   py -m pip install aiohttp pynput qrcode
+   py \\wsl$\<distro>\home\<user>\path\to\remote-kbm\server\main.py
+   ```
+   e.g. `py \\wsl$\Ubuntu\home\sujandumaru\workspace\remote-kbm\server\main.py`
+   (WSL must be running for that path to be reachable.)
+
+3. On the **first run**, allow the Windows Firewall prompt → tick *Private networks* → *Allow*.
+
+4. Keep that PowerShell window open while you use the remote — closing it stops the agent.
+
+### Run on macOS / Linux
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python server/main.py
 ```
 
+### Connect your phone
+
 The agent prints a **QR code** plus a URL like `http://192.168.1.23:8765/?k=XXXX`. Scan the QR
 with your phone camera (or type the URL) — the phone must be on the **same WiFi**. The status
 dot turns green when connected. The `?k=` token gates access so a random device on the network
-can't drive your machine. The token is saved to `~/.remote-kbm-token` so it survives agent
-restarts (delete that file to rotate it).
+can't drive your machine. The token is saved to `~/.remote-kbm-token` (on Windows,
+`C:\Users\<you>\.remote-kbm-token`) so it survives agent restarts — delete that file to rotate it.
 
 **Install as an app:** open the page **via the QR link**, then use the browser menu →
 *Add to Home Screen* (Android Chrome: *Install app*). It launches fullscreen with its own
@@ -43,10 +73,6 @@ icon and the token baked in — no rescanning. While you use it, the page keeps 
 screen awake. If it ever shows *disconnected*, the status text says why (agent not running /
 wrong WiFi / stale token) — tap it to retry; after rotating the token, remove and re-add the
 app.
-
-> **Do not run the agent inside WSL.** WSL2 uses a NAT network (its `172.x` IP is unreachable
-> from your phone) *and* pynput there controls the WSLg Linux display, not the real Windows
-> desktop. To control Windows, install Python on Windows and run it from PowerShell as above.
 
 ## Gestures
 
