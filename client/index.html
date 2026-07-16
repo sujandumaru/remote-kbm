@@ -7,7 +7,6 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icon.png">
 <link rel="icon" href="/icon.png">
 <title>remote-kbm</title>
@@ -97,16 +96,37 @@
 
 <script>
 // ---- connection -------------------------------------------------------------
-// Token comes from the QR URL; remember it so the installed app can start from "/".
+// Token comes from the QR URL (or localStorage as a fallback for older installs).
 const token = new URLSearchParams(location.search).get("k") || localStorage.getItem("kbm-token") || "";
 const dot = document.getElementById("dot"), stat = document.getElementById("stat");
-let ws;
+let ws, retryT = null;
+
+// The manifest link must carry the token (the server bakes it into start_url),
+// so it is injected here instead of being a static tag.
+const mlink = document.createElement("link");
+mlink.rel = "manifest";
+mlink.href = `/manifest.json?k=${encodeURIComponent(token)}`;
+document.head.appendChild(mlink);
+
 function connect() {
+  clearTimeout(retryT);
+  stat.textContent = "connecting…";
   ws = new WebSocket(`ws://${location.host}/ws?k=${encodeURIComponent(token)}`);
   ws.onopen  = () => { dot.classList.add("on");  stat.textContent = "connected"; localStorage.setItem("kbm-token", token); };
-  ws.onclose = () => { dot.classList.remove("on"); stat.textContent = "disconnected"; setTimeout(connect, 1000); };
+  ws.onclose = () => { dot.classList.remove("on"); diagnose(); retryT = setTimeout(connect, 1500); };
   ws.onerror = () => ws.close();
 }
+async function diagnose() {  // a raw WS close can't say why — ask over HTTP
+  let why = "reconnecting…";
+  if (!token) why = "no token — open the QR link once";
+  else try {
+    const r = await fetch(`/ping?k=${encodeURIComponent(token)}`);
+    if (!r.ok) why = "wrong token — rescan the QR";
+  } catch (e) { why = "PC unreachable — agent on? same WiFi?"; }
+  stat.textContent = why + " (tap to retry)";
+}
+stat.addEventListener("click", connect);
+dot.addEventListener("click", connect);
 function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
 connect();
 

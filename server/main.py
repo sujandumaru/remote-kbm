@@ -58,7 +58,19 @@ async def index(request):
 
 
 async def manifest(request):
-    return web.FileResponse(CLIENT_DIR / "manifest.json")
+    # Token-gated, and start_url carries the token: installed PWAs launch at start_url,
+    # and home-screen apps don't share localStorage with the browser they were added from.
+    if not hmac.compare_digest(request.query.get("k", ""), TOKEN):
+        return web.Response(status=403, text="bad token")
+    data = json.loads((CLIENT_DIR / "manifest.json").read_text())
+    data["start_url"] = f"/?k={TOKEN}"
+    return web.json_response(data)
+
+
+async def ping(request):
+    """Lets the client tell 'PC unreachable' apart from 'wrong token'."""
+    ok = hmac.compare_digest(request.query.get("k", ""), TOKEN)
+    return web.Response(status=204 if ok else 403)
 
 
 async def icon(request):
@@ -88,7 +100,8 @@ async def ws_handler(request):
 def main():
     app = web.Application()
     app.add_routes([web.get("/", index), web.get("/ws", ws_handler),
-                    web.get("/manifest.json", manifest), web.get("/icon.png", icon)])
+                    web.get("/manifest.json", manifest), web.get("/icon.png", icon),
+                    web.get("/ping", ping)])
     url = f"http://{lan_ip()}:{PORT}/?k={TOKEN}"
     print("\n  Scan this on your phone (same WiFi), or open the URL:\n", flush=True)
     try:

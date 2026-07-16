@@ -37,9 +37,12 @@ dot turns green when connected. The `?k=` token gates access so a random device 
 can't drive your machine. The token is saved to `~/.remote-kbm-token` so it survives agent
 restarts (delete that file to rotate it).
 
-**Install as an app:** open the page, then use the browser menu → *Add to Home Screen*
-(Android Chrome: *Install app*). It launches fullscreen with its own icon, and remembers the
-token — no rescanning. While you use it, the page keeps your phone screen awake.
+**Install as an app:** open the page **via the QR link**, then use the browser menu →
+*Add to Home Screen* (Android Chrome: *Install app*). It launches fullscreen with its own
+icon and the token baked in — no rescanning. While you use it, the page keeps your phone
+screen awake. If it ever shows *disconnected*, the status text says why (agent not running /
+wrong WiFi / stale token) — tap it to retry; after rotating the token, remove and re-add the
+app.
 
 > **Do not run the agent inside WSL.** WSL2 uses a NAT network (its `172.x` IP is unreachable
 > from your phone) *and* pynput there controls the WSLg Linux display, not the real Windows
