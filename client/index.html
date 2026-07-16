@@ -274,23 +274,33 @@ function clearMods() { mods.clear(); document.querySelectorAll(".mod").forEach(b
 // diffing values on input events — mobile IMEs make keydown/keyCode unreliable.
 let lastVal = "";
 
-txt.addEventListener("beforeinput", e => {
-  const it = e.inputType;
-  if (it === "insertLineBreak" || it === "insertParagraph") {
-    e.preventDefault();                       // textarea fires this reliably for Enter
-    send({ t: "key", k: "enter", mods: [...mods] }); clearMods();
-  } else if (mods.size && it === "insertText" && e.data) {
-    e.preventDefault();                       // latched modifier: send as combo, skip echo
-    send({ t: "key", k: e.data.slice(-1), mods: [...mods] }); clearMods();
-  }
-});
-
+// Everything routes through `input` — the one event mobile IMEs fire reliably.
+// (beforeinput with usable `data` is flaky on Android, which broke Ctrl+C.)
 txt.addEventListener("input", () => {
-  const v = txt.value;
-  let p = 0;                                  // common prefix; handles autocorrect rewrites too
+  let v = txt.value;
+
+  // Latched modifier (Ctrl/Alt/Win…): send the newly typed char(s) as a combo, don't echo.
+  if (mods.size && v.length > lastVal.length) {
+    for (const ch of v.slice(lastVal.length)) send({ t: "key", k: ch.toLowerCase(), mods: [...mods] });
+    clearMods();
+    txt.value = lastVal;                      // keep the combo char out of the echo box
+    return;
+  }
+
+  let p = 0;                                  // common prefix — handles autocorrect rewrites too
   while (p < lastVal.length && p < v.length && lastVal[p] === v[p]) p++;
   for (let i = 0; i < lastVal.length - p; i++) send({ t: "key", k: "backspace" });
-  if (p < v.length) send({ t: "text", s: v.slice(p) });
+
+  const added = v.slice(p);
+  if (added.includes("\n")) {                 // Enter in a textarea shows up as a newline
+    added.split("\n").forEach((seg, i) => {
+      if (i) send({ t: "key", k: "enter" });
+      if (seg) send({ t: "text", s: seg });
+    });
+    v = v.replace(/\n/g, ""); txt.value = v;  // keep the echo box single-line-ish
+  } else if (added) {
+    send({ t: "text", s: added });
+  }
   lastVal = v;
 });
 
