@@ -6,6 +6,7 @@ the bottom can swap in recording stubs and run headless.
 """
 import contextlib
 import logging
+import sys
 
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
@@ -14,6 +15,52 @@ log = logging.getLogger("inject")
 
 mouse = MouseController()
 keyboard = KeyboardController()
+
+
+def _abs_coords(x, y, dx, dy, vx, vy, vw, vh):
+    """Map a target pixel (current + delta) into SendInput's 0..65535 virtual-desktop space."""
+    ax = round((x + dx - vx) * 65535 / max(vw - 1, 1))
+    ay = round((y + dy - vy) * 65535 / max(vh - 1, 1))
+    return ax, ay
+
+
+# On Windows, pynput moves the cursor with SetCursorPos, which Windows does NOT treat
+# as mouse-device activity — so the pointer stays HIDDEN until a real mouse moves
+# (the "invisible cursor" report). An ABSOLUTE SendInput move counts as real mouse
+# input, revealing the pointer, and absolute coords bypass pointer-accel so our own
+# client-side acceleration is the only one in play.
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    class _MOUSEINPUT(ctypes.Structure):
+        _fields_ = (("dx", wintypes.LONG), ("dy", wintypes.LONG),
+                    ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t))
+
+    class _INPUT(ctypes.Structure):
+        class _U(ctypes.Union):
+            _fields_ = (("mi", _MOUSEINPUT),)
+        _anonymous_ = ("u",)
+        _fields_ = (("type", wintypes.DWORD), ("u", _U))
+
+    _u32 = ctypes.windll.user32
+    _u32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int)
+    _MOVE_ABS = 0x0001 | 0x8000 | 0x4000        # MOVE | ABSOLUTE | VIRTUALDESK
+    _SM = (76, 77, 78, 79)                       # virtual screen X, Y, CX, CY
+
+    def move_rel(dx, dy):
+        pt = wintypes.POINT()
+        _u32.GetCursorPos(ctypes.byref(pt))
+        vx, vy, vw, vh = (_u32.GetSystemMetrics(m) for m in _SM)
+        ax, ay = _abs_coords(pt.x, pt.y, dx, dy, vx, vy, vw, vh)
+        inp = _INPUT()
+        inp.type = 0                             # INPUT_MOUSE
+        inp.mi = _MOUSEINPUT(ax, ay, 0, _MOVE_ABS, 0, 0)
+        _u32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+else:
+    def move_rel(dx, dy):
+        mouse.move(dx, dy)
 
 BUTTONS = {"left": Button.left, "right": Button.right, "middle": Button.middle}
 
@@ -49,7 +96,7 @@ def handle(msg):
     t = msg.get("t")
     try:
         if t == "move":
-            mouse.move(int(msg["dx"]), int(msg["dy"]))
+            move_rel(int(msg["dx"]), int(msg["dy"]))
         elif t == "click":
             mouse.click(BUTTONS[msg["b"]], int(msg.get("n", 1)))
         elif t == "press":
@@ -96,6 +143,14 @@ def _selfcheck():
 
     handle({"t": "move", "dx": 100, "dy": -5})
     assert mouse.calls[-1] == ("move", 100, -5)
+
+    # absolute-coord normalization (Windows cursor-reveal path): corners and centre of 1920x1080
+    assert _abs_coords(0, 0, 0, 0, 0, 0, 1920, 1080) == (0, 0)
+    assert _abs_coords(1919, 1079, 0, 0, 0, 0, 1920, 1080) == (65535, 65535)
+    assert _abs_coords(900, 500, 60, 40, 0, 0, 1920, 1080) == (32785, 32798)
+    # second monitor to the left (negative virtual origin) still maps into range
+    ax, ay = _abs_coords(-1920, 0, 0, 0, -1920, 0, 3840, 1080)
+    assert (ax, ay) == (0, 0)
 
     handle({"t": "click", "b": "left", "n": 2})
     assert mouse.calls[-1] == ("click", Button.left, 2)
