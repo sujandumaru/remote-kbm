@@ -44,12 +44,18 @@ if sys.platform == "win32":
         _anonymous_ = ("u",)
         _fields_ = (("type", wintypes.DWORD), ("u", _U))
 
-    _u32 = ctypes.windll.user32
+    # OUR OWN user32 handle — ctypes.windll.user32 is shared with pynput, and setting
+    # argtypes on that shared SendInput corrupts pynput's own keyboard/mouse SendInput calls.
+    _u32 = ctypes.WinDLL("user32", use_last_error=True)
     _u32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int)
+    _u32.SendInput.restype = wintypes.UINT
     _MOVE_ABS = 0x0001 | 0x8000 | 0x4000        # MOVE | ABSOLUTE | VIRTUALDESK
     _SM = (76, 77, 78, 79)                       # virtual screen X, Y, CX, CY
 
+    _si_warned = False
+
     def move_rel(dx, dy):
+        global _si_warned
         pt = wintypes.POINT()
         _u32.GetCursorPos(ctypes.byref(pt))
         vx, vy, vw, vh = (_u32.GetSystemMetrics(m) for m in _SM)
@@ -57,7 +63,11 @@ if sys.platform == "win32":
         inp = _INPUT()
         inp.type = 0                             # INPUT_MOUSE
         inp.mi = _MOUSEINPUT(ax, ay, 0, _MOVE_ABS, 0, 0)
-        _u32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+        sent = _u32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+        if sent != 1 and not _si_warned:         # 0 = Windows blocked the injection
+            _si_warned = True
+            log.warning("SendInput rejected (err=%d) — cursor injection is being blocked "
+                        "(run the agent as admin?)", ctypes.get_last_error())
 else:
     def move_rel(dx, dy):
         mouse.move(dx, dy)
