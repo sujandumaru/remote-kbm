@@ -1,7 +1,8 @@
 """remote-kbm desktop agent: serves the phone client and injects its input.
 
-Run: python server/main.py    (see plans/01-mvp.md / README.md)
+Run: python server/main.py    (see README.md)
 """
+import argparse
 import asyncio
 import hmac
 import json
@@ -13,7 +14,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 
-import inject
+from runtime_check import check_runtime, describe_runtime
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("main")
@@ -40,18 +41,38 @@ def load_token():
 
 
 TOKEN = load_token()
+inject = None
 
 
 def lan_ip():
     """Best-effort primary LAN IP (no packets sent)."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s = None
     try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         return s.getsockname()[0]
     except OSError:
         return "127.0.0.1"
     finally:
-        s.close()
+        if s is not None:
+            s.close()
+
+
+def connect_url():
+    return f"http://{lan_ip()}:{PORT}/?k={TOKEN}"
+
+
+def print_connection(url):
+    print("\n  Scan this on your phone (same WiFi), or open the URL:\n", flush=True)
+    try:
+        import qrcode
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(url)
+        qr.print_ascii(invert=True)
+    except (ImportError, OSError, UnicodeError) as e:
+        # Some Windows consoles cannot encode qrcode's block characters.
+        print(f"  (QR unavailable in this terminal: {e})", flush=True)
+    print("\n    " + url + "\n", flush=True)
 
 
 async def index(request):
@@ -59,8 +80,7 @@ async def index(request):
 
 
 async def manifest(request):
-    # Token-gated, and start_url carries the token: installed PWAs launch at start_url,
-    # and home-screen apps don't share localStorage with the browser they were added from.
+    # Home-screen apps need the token in start_url because their storage is isolated.
     if not hmac.compare_digest(request.query.get("k", ""), TOKEN):
         return web.Response(status=403, text="bad token")
     data = json.loads((CLIENT_DIR / "manifest.json").read_text())
@@ -99,9 +119,7 @@ async def ws_handler(request):
 
 
 async def quiet_disconnects(app):
-    # Browsers open speculative connections and reset them; Windows' proactor loop
-    # logs every reset as an "Exception in callback" (WinError 10054). Cosmetic —
-    # swallow just those, let every other loop error stay loud.
+    # Suppress harmless browser resets without hiding other event-loop errors.
     loop = asyncio.get_running_loop()
 
     def handler(lp, ctx):
@@ -112,23 +130,45 @@ async def quiet_disconnects(app):
     loop.set_exception_handler(handler)
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="remote-kbm desktop agent")
+    parser.add_argument(
+        "--show-connect",
+        action="store_true",
+        help="print the saved QR/URL and exit without starting another server",
+    )
+    args = parser.parse_args(argv)
+    if args.show_connect:
+        print_connection(connect_url())
+        return
+
+    global inject
+    try:
+        warnings = check_runtime()
+    except RuntimeError as e:
+        raise SystemExit(f"\nERROR: {e}\n") from None
+
+    try:
+        import inject as inject_module
+    except ImportError as e:
+        raise SystemExit(
+            "\nERROR: Could not initialize desktop input control. "
+            f"Check the OS setup notes in README.md.\n\n{e}\n"
+        ) from None
+    inject = inject_module
+
+    log.info("runtime: %s", describe_runtime())
+    for warning in warnings:
+        log.warning(warning)
+
     app = web.Application()
     app.on_startup.append(quiet_disconnects)
     app.add_routes([web.get("/", index), web.get("/ws", ws_handler),
                     web.get("/manifest.json", manifest), web.get("/icon.png", icon),
                     web.get("/ping", ping)])
-    url = f"http://{lan_ip()}:{PORT}/?k={TOKEN}"
-    print("\n  Scan this on your phone (same WiFi), or open the URL:\n", flush=True)
-    try:
-        import qrcode
-        qr = qrcode.QRCode(border=1)
-        qr.add_data(url)
-        qr.print_ascii(invert=True)   # invert suits dark terminals; drop it on a light one
-    except ImportError:
-        pass                          # QR is optional; the URL below is enough
-    print("\n    " + url + "\n", flush=True)
-    web.run_app(app, port=PORT, print=None)
+    url = connect_url()
+    print_connection(url)
+    web.run_app(app, host="0.0.0.0", port=PORT, print=None)
 
 
 if __name__ == "__main__":

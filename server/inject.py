@@ -1,4 +1,4 @@
-"""Map wire-protocol messages (see plans/01-mvp.md) to OS input via pynput.
+"""Map wire-protocol messages (the `t` branches in `handle`) to OS input via pynput.
 
 Nothing here executes strings from the wire; every message routes through an
 explicit branch. `mouse` and `keyboard` are module globals so the self-check at
@@ -24,11 +24,8 @@ def _abs_coords(x, y, dx, dy, vx, vy, vw, vh):
     return ax, ay
 
 
-# On Windows, pynput moves the cursor with SetCursorPos, which Windows does NOT treat
-# as mouse-device activity — so the pointer stays HIDDEN until a real mouse moves
-# (the "invisible cursor" report). An ABSOLUTE SendInput move counts as real mouse
-# input, revealing the pointer, and absolute coords bypass pointer-accel so our own
-# client-side acceleration is the only one in play.
+# Absolute SendInput reveals hidden Windows cursors and avoids a second layer of
+# pointer acceleration on top of the client's acceleration.
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
@@ -44,13 +41,21 @@ if sys.platform == "win32":
         _anonymous_ = ("u",)
         _fields_ = (("type", wintypes.DWORD), ("u", _U))
 
-    # OUR OWN user32 handle — ctypes.windll.user32 is shared with pynput, and setting
-    # argtypes on that shared SendInput corrupts pynput's own keyboard/mouse SendInput calls.
+    # A private handle prevents these signatures from corrupting pynput's shared
+    # user32 functions.
     _u32 = ctypes.WinDLL("user32", use_last_error=True)
     _u32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int)
     _u32.SendInput.restype = wintypes.UINT
-    _MOVE_ABS = 0x0001 | 0x8000 | 0x4000        # MOVE | ABSOLUTE | VIRTUALDESK
-    _SM = (76, 77, 78, 79)                       # virtual screen X, Y, CX, CY
+    _MOVE_ABS = 0x0001 | 0x8000 | 0x4000
+    _SM = (76, 77, 78, 79)
+
+    # Over RDP, mstsc draws the pointer at its own local mouse position and ignores
+    # server-side injected moves, so the cursor looks frozen even though clicks land.
+    REMOTE_SESSION = bool(_u32.GetSystemMetrics(0x1000))
+    if REMOTE_SESSION:
+        log.warning("Remote Desktop session detected: moves and clicks are injected "
+                    "correctly, but mstsc will not draw the cursor following them. "
+                    "Use the PC at its physical console to see the pointer move.")
 
     _si_warned = False
 
@@ -61,10 +66,10 @@ if sys.platform == "win32":
         vx, vy, vw, vh = (_u32.GetSystemMetrics(m) for m in _SM)
         ax, ay = _abs_coords(pt.x, pt.y, dx, dy, vx, vy, vw, vh)
         inp = _INPUT()
-        inp.type = 0                             # INPUT_MOUSE
+        inp.type = 0
         inp.mi = _MOUSEINPUT(ax, ay, 0, _MOVE_ABS, 0, 0)
         sent = _u32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
-        if sent != 1 and not _si_warned:         # 0 = Windows blocked the injection
+        if sent != 1 and not _si_warned:
             _si_warned = True
             log.warning("SendInput rejected (err=%d) — cursor injection is being blocked "
                         "(run the agent as admin?)", ctypes.get_last_error())
@@ -92,7 +97,7 @@ _warned = set()
 
 
 def _tap(name, mods):
-    key = SPECIAL.get(name, name)  # single char passes straight through
+    key = SPECIAL.get(name, name)
     with contextlib.ExitStack() as stack:
         for m in mods:
             if m in MODS:
@@ -154,13 +159,9 @@ def _selfcheck():
     handle({"t": "move", "dx": 100, "dy": -5})
     assert mouse.calls[-1] == ("move", 100, -5)
 
-    # abs-coord normalization. The screen sizes below are ARBITRARY EXAMPLE INPUTS for the
-    # math only — at runtime move_rel() reads the real geometry from GetSystemMetrics, so any
-    # resolution/monitor works. Case 1: corners & centre of an example 1920x1080 display.
     assert _abs_coords(0, 0, 0, 0, 0, 0, 1920, 1080) == (0, 0)
     assert _abs_coords(1919, 1079, 0, 0, 0, 0, 1920, 1080) == (65535, 65535)
     assert _abs_coords(900, 500, 60, 40, 0, 0, 1920, 1080) == (32785, 32798)
-    # Case 2: a second monitor left of primary (negative virtual origin) still maps into range.
     assert _abs_coords(-1920, 0, 0, 0, -1920, 0, 3840, 1080) == (0, 0)
 
     handle({"t": "click", "b": "left", "n": 2})
@@ -185,7 +186,7 @@ def _selfcheck():
     handle({"t": "key", "k": "enter"})
     assert keyboard.calls[-2:] == [("press", Key.enter), ("release", Key.enter)]
 
-    handle({"t": "key", "k": "a"})  # plain char passes through
+    handle({"t": "key", "k": "a"})
     assert keyboard.calls[-2:] == [("press", "a"), ("release", "a")]
 
     handle({"t": "key", "k": "media_volume_up"})
@@ -197,8 +198,8 @@ def _selfcheck():
         ("hold", (Key.ctrl,)), ("press", "c"), ("release", "c"), ("drop", (Key.ctrl,))]
 
     n = len(mouse.calls) + len(keyboard.calls)
-    handle({"t": "nope"})                 # unknown -> ignored
-    handle({"t": "move", "dx": "x"})      # bad payload -> ignored
+    handle({"t": "nope"})
+    handle({"t": "move", "dx": "x"})
     assert len(mouse.calls) + len(keyboard.calls) == n
 
     print("inject self-check OK")

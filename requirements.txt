@@ -1,3 +1,3 @@
-aiohttp
-pynput
-qrcode
+aiohttp>=3.10,<4
+pynput>=1.7.6,<2
+qrcode>=7.4,<9
