@@ -92,6 +92,12 @@ class TokenGateTest(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["start_url"], f"/?k={TOKEN}")
 
+    async def test_index_is_not_cached(self):
+        # A cached page means the phone runs an old client after the agent is updated.
+        resp = await self.client.get("/", params={"k": TOKEN})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.headers.get("Cache-Control"), "no-store")
+
 
 if __name__ == "__main__":
     unittest.main()

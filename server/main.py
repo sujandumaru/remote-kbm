@@ -76,7 +76,9 @@ def print_connection(url):
 
 
 async def index(request):
-    return web.FileResponse(CLIENT_DIR / "index.html")
+    # no-store, or a home-screen app keeps serving the page it first installed.
+    return web.FileResponse(CLIENT_DIR / "index.html",
+                            headers={"Cache-Control": "no-store"})
 
 
 async def manifest(request):
@@ -114,6 +116,7 @@ async def ws_handler(request):
                 log.warning("non-JSON frame ignored")
         elif msg.type == aiohttp.WSMsgType.ERROR:
             log.warning("ws error: %s", ws.exception())
+    inject.release_all()
     log.info("client disconnected: %s", request.remote)
     return ws
 

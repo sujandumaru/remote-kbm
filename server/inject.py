@@ -49,14 +49,6 @@ if sys.platform == "win32":
     _MOVE_ABS = 0x0001 | 0x8000 | 0x4000
     _SM = (76, 77, 78, 79)
 
-    # Over RDP, mstsc draws the pointer at its own local mouse position and ignores
-    # server-side injected moves, so the cursor looks frozen even though clicks land.
-    REMOTE_SESSION = bool(_u32.GetSystemMetrics(0x1000))
-    if REMOTE_SESSION:
-        log.warning("Remote Desktop session detected: moves and clicks are injected "
-                    "correctly, but mstsc will not draw the cursor following them. "
-                    "Use the PC at its physical console to see the pointer move.")
-
     _si_warned = False
 
     def move_rel(dx, dy):
@@ -104,6 +96,15 @@ def _tap(name, mods):
                 stack.enter_context(keyboard.pressed(MODS[m]))
         keyboard.press(key)
         keyboard.release(key)
+
+
+def release_all():
+    """Drop every mouse button; a phone that dies mid-drag cannot send its own release."""
+    for button in BUTTONS.values():
+        try:
+            mouse.release(button)
+        except Exception as e:  # noqa: BLE001 - a failed release must not break teardown
+            log.warning("release failed for %s: %s", button, e)
 
 
 def handle(msg):
@@ -196,6 +197,11 @@ def _selfcheck():
     handle({"t": "key", "k": "c", "mods": ["ctrl"]})
     assert keyboard.calls[-4:] == [
         ("hold", (Key.ctrl,)), ("press", "c"), ("release", "c"), ("drop", (Key.ctrl,))]
+
+    handle({"t": "press", "b": "left"})
+    release_all()
+    assert mouse.calls[-3:] == [
+        ("release", Button.left), ("release", Button.right), ("release", Button.middle)]
 
     n = len(mouse.calls) + len(keyboard.calls)
     handle({"t": "nope"})
