@@ -5,10 +5,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from aiohttp.test_utils import AioHTTPTestCase
+
 SERVER_DIR = Path(__file__).resolve().parents[1] / "server"
 sys.path.insert(0, str(SERVER_DIR))
 
 import main  # noqa: E402
+
+TOKEN = "test-token-value"
 
 
 class MainHelpersTest(unittest.TestCase):
@@ -47,6 +51,46 @@ class MainHelpersTest(unittest.TestCase):
             main.main(["--show-connect"])
 
         print_connection.assert_called_once_with("http://example.test")
+
+
+class TokenGateTest(AioHTTPTestCase):
+    """The ?k= token is the only access control; every gated route must reject a bad one."""
+
+    GATED = ("/ws", "/manifest.json", "/ping")
+
+    async def get_application(self):
+        patcher = mock.patch.object(main, "TOKEN", TOKEN)  # addCleanup: enterContext is 3.11+
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return main.create_app()
+
+    async def test_gated_routes_reject_wrong_token(self):
+        for path in self.GATED:
+            with self.subTest(path=path):
+                resp = await self.client.get(path, params={"k": "wrong-token-value"})
+                self.assertEqual(resp.status, 403)
+
+    async def test_gated_routes_reject_missing_token(self):
+        for path in self.GATED:
+            with self.subTest(path=path):
+                resp = await self.client.get(path)
+                self.assertEqual(resp.status, 403)
+
+    async def test_gated_routes_reject_token_prefix(self):
+        # compare_digest must not accept a truncated token the way startswith would.
+        for path in self.GATED:
+            with self.subTest(path=path):
+                resp = await self.client.get(path, params={"k": TOKEN[:-1]})
+                self.assertEqual(resp.status, 403)
+
+    async def test_ping_accepts_correct_token(self):
+        resp = await self.client.get("/ping", params={"k": TOKEN})
+        self.assertEqual(resp.status, 204)
+
+    async def test_manifest_bakes_token_into_start_url(self):
+        resp = await self.client.get("/manifest.json", params={"k": TOKEN})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["start_url"], f"/?k={TOKEN}")
 
 
 if __name__ == "__main__":

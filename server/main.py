@@ -130,6 +130,16 @@ async def quiet_disconnects(app):
     loop.set_exception_handler(handler)
 
 
+def create_app():
+    """Wire the routes. Separate from main() so tests exercise the real routing table."""
+    app = web.Application()
+    app.on_startup.append(quiet_disconnects)
+    app.add_routes([web.get("/", index), web.get("/ws", ws_handler),
+                    web.get("/manifest.json", manifest), web.get("/icon.png", icon),
+                    web.get("/ping", ping)])
+    return app
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="remote-kbm desktop agent")
     parser.add_argument(
@@ -161,11 +171,7 @@ def main(argv=None):
     for warning in warnings:
         log.warning(warning)
 
-    app = web.Application()
-    app.on_startup.append(quiet_disconnects)
-    app.add_routes([web.get("/", index), web.get("/ws", ws_handler),
-                    web.get("/manifest.json", manifest), web.get("/icon.png", icon),
-                    web.get("/ping", ping)])
+    app = create_app()
     url = connect_url()
     print_connection(url)
     web.run_app(app, host="0.0.0.0", port=PORT, print=None)
