@@ -37,7 +37,9 @@ Install Python 3.10 or newer first. Each installer creates an isolated environme
 application-data directory, copies the small runtime there, installs the dependencies, registers
 native per-user startup, and prints the QR code when the terminal supports it (the URL is always
 printed). The clone can be moved or deleted after installation; rerun the installer after pulling
-updates. No administrator account is required for the startup registration.
+updates. No administrator account is required for the startup registration. On Windows, the
+installer also verifies that the background server is listening; if it cannot start, the recent
+startup log is printed in the terminal and the installation exits with an error.
 
 Startup happens when the user **signs in**, not before login, because desktop input injection
 must run inside that user's graphical session.

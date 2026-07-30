@@ -27,6 +27,7 @@ $appServerDirectory = Join-Path $appDirectory "server"
 $appClientDirectory = Join-Path $appDirectory "client"
 $serverPath = Join-Path $appServerDirectory "main.py"
 $runnerPath = Join-Path $startupDirectory "run-at-login.ps1"
+$logPath = Join-Path $startupDirectory "server.log"
 $venvDirectory = Join-Path $startupDirectory "venv"
 $pythonPath = Join-Path $venvDirectory "Scripts\python.exe"
 
@@ -131,9 +132,30 @@ if ($existingListener) {
     Write-Host "Startup installed. Launch skipped because -NoStart was supplied."
 } else {
     Start-ScheduledTask -TaskName $taskName
-    Start-Sleep -Seconds 2
-    $task = Get-ScheduledTask -TaskName $taskName
-    Write-Host "Startup installed and launch requested. Task state: $($task.State)"
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 500
+        $listener = Get-NetTCPConnection `
+            -State Listen `
+            -LocalPort 8765 `
+            -ErrorAction SilentlyContinue
+    } until ($listener -or (Get-Date) -ge $deadline)
+
+    if (-not $listener) {
+        $task = Get-ScheduledTask -TaskName $taskName
+        $taskInfo = Get-ScheduledTaskInfo -TaskName $taskName
+        Write-Host ""
+        Write-Host "remote-kbm did not start. Recent startup log:" -ForegroundColor Red
+        if (Test-Path -LiteralPath $logPath) {
+            Get-Content -LiteralPath $logPath -Tail 30 -Encoding UTF8 |
+                ForEach-Object { Write-Host "  $_" }
+        } else {
+            Write-Host "  No startup log was created at $logPath"
+        }
+        throw "remote-kbm is not listening on port 8765. Task state: $($task.State); task result: $($taskInfo.LastTaskResult)."
+    }
+
+    Write-Host "Startup installed. remote-kbm is running and listening on port 8765."
 }
 
 try {
@@ -147,7 +169,7 @@ try {
 }
 
 Write-Host "Task: $taskName"
-Write-Host "Log:  $env:LOCALAPPDATA\remote-kbm\server.log"
+Write-Host "Log:  $logPath"
 Write-Host "Use windows\uninstall-startup.ps1 to remove automatic startup."
 if (-not $NoConnectOutput) {
     & $pythonPath $serverPath --show-connect

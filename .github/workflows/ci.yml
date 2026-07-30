@@ -55,7 +55,7 @@ jobs:
         shell: pwsh
         run: |
           $failed = $false
-          Get-ChildItem windows -Filter *.ps1 | ForEach-Object {
+          Get-ChildItem windows, tests -Filter *.ps1 | ForEach-Object {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
@@ -67,3 +67,15 @@ jobs:
             }
           }
           if ($failed) { exit 1 }
+
+      - name: Test Windows startup success and failure
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & powershell.exe `
+            -NoLogo `
+            -NoProfile `
+            -NonInteractive `
+            -ExecutionPolicy Bypass `
+            -File tests\test-windows-startup.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

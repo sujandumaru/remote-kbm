@@ -26,7 +26,7 @@ if ((Test-Path -LiteralPath $logFile) -and
 function Write-StartupLog {
     param([string]$Message)
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -LiteralPath $logFile -Value "[$timestamp] $Message"
+    Add-Content -LiteralPath $logFile -Value "[$timestamp] $Message" -Encoding UTF8
 }
 
 try {
@@ -44,8 +44,24 @@ try {
     $env:PYTHONUNBUFFERED = "1"
 
     Write-StartupLog "Starting remote-kbm from $serverPath"
-    & $PythonPath $serverPath *>> $logFile
-    $serverExitCode = $LASTEXITCODE
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell reports native stderr as an error stream; Python logs there normally.
+        $ErrorActionPreference = "Continue"
+        & $PythonPath $serverPath 2>&1 |
+            ForEach-Object {
+                Add-Content `
+                    -LiteralPath $logFile `
+                    -Value $_.ToString() `
+                    -Encoding UTF8
+            }
+        $serverExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
+    if ($null -eq $serverExitCode) {
+        throw "Windows Python could not be launched: $PythonPath"
+    }
     Write-StartupLog "remote-kbm exited with code $serverExitCode"
     exit $serverExitCode
 } catch {
