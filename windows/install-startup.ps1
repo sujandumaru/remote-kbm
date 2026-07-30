@@ -103,6 +103,17 @@ Copy-Item -Path (Join-Path $sourceClientDirectory "*") `
     -Recurse `
     -Force
 Copy-Item -LiteralPath $launcherTemplate -Destination $launcherPath -Force
+$sourceClientHash = (Get-FileHash `
+    -LiteralPath (Join-Path $sourceClientDirectory "index.html") `
+    -Algorithm SHA256).Hash
+$installedClientHash = (Get-FileHash `
+    -LiteralPath (Join-Path $appClientDirectory "index.html") `
+    -Algorithm SHA256).Hash
+if ($sourceClientHash -ne $installedClientHash) {
+    throw "The installed phone client does not match the repository copy."
+}
+$clientBuild = $installedClientHash.Substring(0, 12).ToLowerInvariant()
+Write-Host "Installed phone client build: $clientBuild"
 
 $userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $actionArguments = '-S "{0}" "{1}" "{2}" "{3}"' -f `
@@ -128,7 +139,14 @@ $settings = New-ScheduledTaskSettingsSet `
 $installedTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($installedTask) {
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
+    $stopDeadline = (Get-Date).AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 250
+        $stoppingListener = Get-NetTCPConnection `
+            -State Listen `
+            -LocalPort 8765 `
+            -ErrorAction SilentlyContinue
+    } until (-not $stoppingListener -or (Get-Date) -ge $stopDeadline)
 }
 Register-ScheduledTask `
     -TaskName $taskName `
@@ -186,6 +204,7 @@ try {
 
 Write-Host "Task: $taskName"
 Write-Host "Log:  $logPath"
+Write-Host "After an update, fully close and reopen the phone app."
 Write-Host "Use windows\uninstall-startup.ps1 to remove automatic startup."
 if (-not $NoConnectOutput) {
     & $pythonPath $serverPath --show-connect

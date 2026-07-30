@@ -129,7 +129,9 @@
 <script>
 const token = new URLSearchParams(location.search).get("k") || localStorage.getItem("kbm-token") || "";
 const dot = document.getElementById("dot"), stat = document.getElementById("stat");
-let ws = null, retryT = null, connectionId = 0;
+let ws = null, retryT = null, verifyT = null, healthT = null;
+let connectionId = 0, connectionReady = false;
+let loadedVersion = localStorage.getItem("kbm-version"), versionCheck = null;
 
 // The generated manifest preserves the token when launched from a home screen.
 const mlink = document.createElement("link");
@@ -137,25 +139,80 @@ mlink.rel = "manifest";
 mlink.href = `/manifest.json?k=${encodeURIComponent(token)}`;
 document.head.appendChild(mlink);
 
+function clearConnectionTimers() {
+  clearTimeout(retryT); clearTimeout(verifyT); clearTimeout(healthT);
+  retryT = verifyT = healthT = null;
+}
+
+function checkForUpdate() {
+  if (versionCheck) return;
+  versionCheck = (async () => {
+    try {
+      const response = await fetch(`/version?now=${Date.now()}`, { cache: "no-store" });
+      if (!response.ok) return;
+      const version = await response.text();
+      if (loadedVersion && loadedVersion !== version) {
+        localStorage.setItem("kbm-version", version);
+        location.reload();
+        return;
+      }
+      loadedVersion = version;
+      localStorage.setItem("kbm-version", version);
+    } catch {
+    } finally {
+      versionCheck = null;
+    }
+  })();
+}
+
 function connect() {
-  clearTimeout(retryT);
-  retryT = null;
+  clearConnectionTimers();
   const id = ++connectionId, previous = ws;
   ws = null;
+  connectionReady = false;
   if (previous && previous.readyState < WebSocket.CLOSING) previous.close();
   dot.classList.remove("on");
+  if (document.hidden) { stat.textContent = "paused"; return; }
+  checkForUpdate();
   stat.textContent = "connecting…";
   const socket = new WebSocket(`ws://${location.host}/ws?k=${encodeURIComponent(token)}`);
+  let verified = false, lastReply = 0;
   ws = socket;
   socket.onopen = () => {
     if (id !== connectionId || socket !== ws) { socket.close(); return; }
+    stat.textContent = "verifying…";
+    socket.send(JSON.stringify({ t: "ping" }));
+    verifyT = setTimeout(() => {
+      if (id === connectionId && socket === ws && !verified) socket.close();
+    }, 3000);
+  };
+  socket.onmessage = event => {
+    if (id !== connectionId || socket !== ws) return;
+    let message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (message.t !== "ready" && message.t !== "pong") return;
+    lastReply = Date.now();
+    if (verified) return;
+    verified = connectionReady = true;
+    clearTimeout(verifyT);
+    verifyT = null;
     dot.classList.add("on");
     stat.textContent = "connected";
     localStorage.setItem("kbm-token", token);
+    const checkHealth = () => {
+      if (id !== connectionId || socket !== ws) return;
+      if (Date.now() - lastReply > 12000) { socket.close(); return; }
+      socket.send(JSON.stringify({ t: "ping" }));
+      healthT = setTimeout(checkHealth, 5000);
+    };
+    healthT = setTimeout(checkHealth, 5000);
   };
   socket.onclose = () => {
     if (id !== connectionId || socket !== ws) return;
+    clearTimeout(verifyT); clearTimeout(healthT);
+    verifyT = healthT = null;
     ws = null;
+    connectionReady = false;
     dot.classList.remove("on");
     stat.textContent = "reconnecting…";
     diagnose(id);
@@ -170,12 +227,25 @@ async function diagnose(id) {
     const r = await fetch(`/ping?k=${encodeURIComponent(token)}`);
     if (!r.ok) why = "wrong token — rescan the QR";
   } catch (e) { why = "PC unreachable — agent on? same WiFi?"; }
-  if (id !== connectionId || (ws && ws.readyState === WebSocket.OPEN)) return;
+  if (id !== connectionId || connectionReady) return;
   stat.textContent = why + " (tap to retry)";
 }
 stat.addEventListener("click", connect);
 dot.addEventListener("click", connect);
-function send(m) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); }
+function send(m) {
+  if (connectionReady && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { connect(); return; }
+  clearConnectionTimers();
+  const socket = ws;
+  ws = null;
+  connectionReady = false;
+  connectionId++;
+  if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+  dot.classList.remove("on");
+  stat.textContent = "paused";
+});
 connect();
 
 // Wake Lock API needs a secure context, which a plain-http LAN origin is not —

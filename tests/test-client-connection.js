@@ -50,6 +50,10 @@ class FakeWebSocket {
     this.onclose();
   }
 
+  receive(message) {
+    this.onmessage({ data: JSON.stringify(message) });
+  }
+
   send(message) {
     this.sent.push(message);
   }
@@ -59,13 +63,23 @@ const dot = element();
 const stat = element();
 const timers = new Map();
 let nextTimer = 1;
+let now = 1000;
+let serverVersion = "v1";
+let reloads = 0;
+const storage = new Map();
 const context = {
+  Date: { now: () => now },
   URLSearchParams,
   WebSocket: FakeWebSocket,
   clearTimeout(id) {
     timers.delete(id);
   },
   document: {
+    hidden: false,
+    listeners: {},
+    addEventListener(type, callback) {
+      this.listeners[type] = callback;
+    },
     getElementById(id) {
       return id === "dot" ? dot : stat;
     },
@@ -75,13 +89,19 @@ const context = {
     head: { appendChild() {} },
   },
   encodeURIComponent,
-  fetch: async () => ({ ok: true }),
+  fetch: async url => url.startsWith("/version")
+    ? { ok: true, text: async () => serverVersion }
+    : { ok: true },
   JSON,
   localStorage: {
-    getItem() { return null; },
-    setItem() {},
+    getItem(key) { return storage.get(key) || null; },
+    setItem(key, value) { storage.set(key, value); },
   },
-  location: { host: "pc.test:8765", search: "?k=test" },
+  location: {
+    host: "pc.test:8765",
+    reload() { reloads++; },
+    search: "?k=test",
+  },
   setTimeout(callback) {
     const id = nextTimer++;
     timers.set(id, callback);
@@ -90,8 +110,7 @@ const context = {
 };
 
 async function flush() {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 6; i++) await Promise.resolve();
 }
 
 async function run() {
@@ -106,22 +125,50 @@ async function run() {
   assert.notStrictEqual(stat.textContent, "connected");
 
   active.open();
+  assert.strictEqual(stat.textContent, "verifying…");
+  assert(!dot.classList.contains("on"));
+  assert.strictEqual(active.sent.length, 1);
+
+  context.send({ t: "move", dx: 1, dy: 1 });
+  assert.strictEqual(active.sent.length, 1);
+
+  active.receive({ t: "ready" });
   assert.strictEqual(stat.textContent, "connected");
   assert(dot.classList.contains("on"));
 
   context.send({ t: "move", dx: 1, dy: 1 });
-  assert.strictEqual(active.sent.length, 1);
+  assert.strictEqual(active.sent.length, 2);
   assert.strictEqual(stale.sent.length, 0);
 
   stale.finishClose();
   await flush();
   assert.strictEqual(stat.textContent, "connected");
 
+  assert.strictEqual(timers.size, 1);
+  const [healthId, healthCheck] = timers.entries().next().value;
+  timers.delete(healthId);
+  now = 14001;
+  healthCheck();
+  assert.strictEqual(active.readyState, FakeWebSocket.CLOSING);
+
   active.finishClose();
   await flush();
   assert(!dot.classList.contains("on"));
   assert(stat.textContent.includes("tap to retry"));
   assert.strictEqual(timers.size, 1);
+
+  context.document.hidden = true;
+  context.document.listeners.visibilitychange();
+  assert.strictEqual(stat.textContent, "paused");
+  assert.strictEqual(timers.size, 0);
+
+  serverVersion = "v2";
+  context.document.hidden = false;
+  context.document.listeners.visibilitychange();
+  await flush();
+  assert.strictEqual(sockets.length, 3);
+  assert.strictEqual(stat.textContent, "connecting…");
+  assert.strictEqual(reloads, 1);
 }
 
 run().catch(error => {

@@ -4,6 +4,7 @@ Run: python server/main.py    (see README.md)
 """
 import argparse
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -11,6 +12,7 @@ import secrets
 import socket
 import sys
 from pathlib import Path
+from urllib.parse import urlencode
 
 from runtime_check import check_runtime, describe_runtime
 
@@ -80,7 +82,17 @@ def lan_ip():
 
 
 def connect_url():
-    return f"http://{lan_ip()}:{PORT}/?k={TOKEN}"
+    return f"http://{lan_ip()}:{PORT}{versioned_path({'k': TOKEN})}"
+
+
+def client_version():
+    return hashlib.sha256((CLIENT_DIR / "index.html").read_bytes()).hexdigest()[:12]
+
+
+def versioned_path(query):
+    params = dict(query)
+    params["v"] = client_version()
+    return "/?" + urlencode(params)
 
 
 def print_connection(url):
@@ -97,8 +109,11 @@ def print_connection(url):
 
 
 async def index(request):
+    if request.query.get("v") != client_version():
+        raise web.HTTPFound(location=versioned_path(request.query))
     response = web.FileResponse(CLIENT_DIR / "index.html")
-    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -107,8 +122,17 @@ async def manifest(request):
     if not hmac.compare_digest(request.query.get("k", ""), TOKEN):
         return web.Response(status=403, text="bad token")
     data = json.loads((CLIENT_DIR / "manifest.json").read_text())
-    data["start_url"] = f"/?k={TOKEN}"
-    return web.json_response(data)
+    data["start_url"] = f"/?k={TOKEN}&v={client_version()}"
+    response = web.json_response(data)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
+async def version(request):
+    return web.Response(
+        text=client_version(),
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 async def ping(request):
@@ -126,15 +150,23 @@ async def ws_handler(request):
         log.warning("rejected WS with bad token from %s", request.remote)
         return web.Response(status=403, text="bad token")
 
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(heartbeat=10)
     await ws.prepare(request)
     log.info("client connected: %s", request.remote)
+    await ws.send_json({"t": "ready"})
     async for msg in ws:
         if msg.type == aiohttp.WSMsgType.TEXT:
             try:
-                inject.handle(json.loads(msg.data))
+                data = json.loads(msg.data)
             except json.JSONDecodeError:
                 log.warning("non-JSON frame ignored")
+                continue
+            if not isinstance(data, dict):
+                continue
+            if data.get("t") == "ping":
+                await ws.send_json({"t": "pong"})
+            else:
+                inject.handle(data)
         elif msg.type == aiohttp.WSMsgType.ERROR:
             log.warning("ws error: %s", ws.exception())
     log.info("client disconnected: %s", request.remote)
@@ -204,7 +236,7 @@ def main(argv=None):
     app.on_startup.append(quiet_disconnects)
     app.add_routes([web.get("/", index), web.get("/ws", ws_handler),
                     web.get("/manifest.json", manifest), web.get("/icon.png", icon),
-                    web.get("/ping", ping)])
+                    web.get("/ping", ping), web.get("/version", version)])
     url = connect_url()
     if args.log_file:
         log.info("connect URL: %s", url)

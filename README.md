@@ -101,7 +101,7 @@ reinstalling is quick and existing phone icons keep working.
 ## Connect your phone
 
 The installer and server print a **QR code** plus a URL like
-`http://192.168.1.23:8765/?k=XXXX`. Scan the QR
+`http://192.168.1.23:8765/?k=XXXX&v=BUILD`. Scan the QR
 with your phone camera (or type the URL) — the phone must be on the **same WiFi**. The status
 dot turns green when connected. The `?k=` token gates access so a random device on the network
 can't drive your machine. The token is saved to `~/.remote-kbm-token` (on Windows,
@@ -117,7 +117,8 @@ rotating the token, remove and re-add the app.
 
 On iPhone, use Safari's **Share → Add to Home Screen**. On Android, use Chrome's
 **⋮ → Install app** or **Add to Home screen**. After desktop sign-in, opening that icon reconnects
-to the computer automatically.
+to the computer automatically. After upgrading remote-kbm, fully close and reopen the phone app
+once. The updated client detects later desktop upgrades and reloads itself.
 
 The installed icon remembers the laptop's current LAN address. For a dependable permanent setup,
 reserve the laptop's WiFi address in your router's DHCP settings. If the laptop's address changes,

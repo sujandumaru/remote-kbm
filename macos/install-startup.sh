@@ -81,5 +81,6 @@ echo
 echo "REQUIRED: In System Settings > Privacy & Security > Accessibility,"
 echo "allow the Python interpreter used by remote-kbm:"
 echo "  $PYTHON_PATH"
+echo "After an update, fully close and reopen the phone app."
 echo "Also allow incoming connections if the macOS firewall prompts."
 "$PYTHON_PATH" "$SERVER_PATH" --show-connect

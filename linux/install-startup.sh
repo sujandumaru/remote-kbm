@@ -161,5 +161,6 @@ fi
 
 echo "Autostart entry: $DESKTOP_PATH"
 echo "Log: $LOG_PATH"
+echo "After an update, fully close and reopen the phone app."
 echo "Allow inbound TCP port 8765 from your trusted LAN in the Linux firewall."
 "$PYTHON_PATH" "$SERVER_PATH" --show-connect
