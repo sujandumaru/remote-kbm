@@ -135,17 +135,98 @@ delete `~/.remote-kbm-token`, rerun the installer, and install the newly printed
 | Two-finger tap | Right click |
 | Two-finger drag | Scroll |
 | Pinch | Zoom (Ctrl + wheel) |
-| Double-tap then hold + drag | Click-and-drag |
+| Press and hold, then drag | Click-and-drag |
 
 Cursor speed is adaptive: move slowly for precision, flick fast to cross the whole screen.
-Tune `GAIN_MIN` / `GAIN_MAX` / `ACCEL` at the top of the client script if it feels off.
+Everything about the feel is adjustable from the phone — see **SteadyTouch** below.
+
+**Two ways to drag.** Press and hold one finger still on the pad; after `Hold time before drag`
+the left button goes down — the pad shows a coloured border and the phone buzzes if it can — and
+from then on your finger drags. Lift to let go. Aim the cursor first, lift, then press and hold.
+Nothing is clicked before the button goes down, which matters on window borders: a click
+immediately followed by a drag is a double-click to Windows, and double-clicking a border resizes
+the window instead.
+
+**Drag lock** needs no timing at all, which makes it the dependable option for long drags and for
+small targets like window resize borders. Park the cursor, tap `Drag lock` (it latches, like the
+Ctrl/Shift keys), drag on the pad — as many strokes as you need — then tap it again to let go.
+Taps are ignored while it is latched, since a tap would release the button. A held button is
+dropped if you background the app, and the agent drops it if the phone disconnects.
 
 Bottom buttons and the keyboard panel (⌨) cover clicks, special keys, and shortcuts. The panel
-has four tabs: **Type** (text box + Esc/Tab/arrows/Enter/⌫/Del and latching Ctrl/Alt/Shift/Win
+has five tabs: **Type** (text box + Esc/Tab/arrows/Enter/⌫/Del and latching Ctrl/Alt/Shift/Win
 modifiers — latch one, then press a key), **Shortcuts** (Start, Alt-Tab, Copy/Paste/Cut,
 Undo/Redo, All, Save, Find, Close, Show-desktop), **Media** (volume, play/pause/next/previous),
-and **Fn** (F1–F12). The text box shows what you type and mirrors edits (including autocorrect)
-to the PC; ✕ clears the box locally without sending anything.
+**Fn** (F1–F12), and **Touch** (see below). The text box shows what you type and mirrors edits
+(including autocorrect) to the PC; ✕ clears the box locally without sending anything.
+
+The latching Ctrl/Alt/Shift/Win modifiers are **sticky keys**: you never hold two things at once,
+so shortcuts stay reachable one finger at a time.
+
+## SteadyTouch
+
+For anyone whose hands do not match the defaults — tremor, limited range, one hand busy, or just
+a phone that feels too twitchy. Everything is a phone-side setting; the desktop agent is unchanged.
+
+Open ⌨ → **Touch**. Start with a preset, then adjust only what still bothers you.
+
+| Preset | For |
+|---|---|
+| **Default** | The original feel, unchanged. Steadying off. |
+| **Precision** | Slow, deliberate work. Low gain, light steadying, small dead zones. |
+| **Accessibility** | Tremor and unsteady hands. Heavy steadying, forgiving taps, dwell click on. |
+
+### Steadying (tremor filtering)
+
+Slow movement is smoothed hard while fast movement passes straight through, so a flick keeps its
+full speed and gains no lag. The cursor also remembers movement smaller than one pixel instead of
+discarding it, so very slow drags still travel.
+
+| Setting | What it does |
+|---|---|
+| `Steadiness` | Main knob. `1` = off. Lower = more damping of slow, shaky movement. |
+| `Tremor dead zone` | Movement smaller than this is ignored completely. Raise it if the cursor creeps while your finger rests. |
+| `Steadying starts below` | Finger speed under this is treated as shake. |
+| `Full speed passes through` | Finger speed above this is never touched, so flicks stay instant. |
+
+### Dwell click
+
+Hold still and it clicks for you — no tap needed. Off unless you turn it on or pick
+**Accessibility**. A ring fills to show progress and fires once; move away and it re-arms.
+
+| Setting | What it does |
+|---|---|
+| `Dwell click` | On/off. |
+| `Dwell hold time` | How long to hold still before it clicks. |
+| `Dwell steadiness allowance` | How much drift is still "holding still". Raise it if it never fires. |
+| `Dwell fires` | Which button it sends: left, right, or middle. |
+
+Tap-to-click keeps working with dwell on.
+
+### Cursor and gestures
+
+| Setting | What it does |
+|---|---|
+| `Slow-move gain` / `Fast-flick gain` | Cursor speed floor and ceiling. |
+| `Acceleration` | How quickly speed ramps between them. `0` = constant speed. |
+| `Tap time limit` / `Tap wobble allowance` | How long and how loosely a touch can still count as a tap. Raise both if your taps are being read as drags. |
+| `Press-and-hold to drag` | On/off. Turn it off if resting a finger keeps starting drags; use `Drag lock` instead. |
+| `Hold time before drag` | How long to hold before the button goes down. Raise it if drags start unintentionally, lower it if holding feels slow. |
+| `Hold wobble allowance` | How much the finger may drift during the hold. Raise it if the drag never starts; lower it if moving the cursor keeps turning into a drag. |
+| `Scroll step` / `Zoom step` | Finger distance per scroll notch or zoom step. Lower = more sensitive. |
+| `Scroll dead zone` / `Pinch dead zone` | How far two fingers travel before scrolling or pinching starts. |
+| `Pinch decision delay` | Pause before deciding scroll-vs-pinch, so a two-finger start is not misread. |
+| `Scroll-vs-pinch bias` | Which way ties break. Higher favours scrolling. |
+| `Natural scroll — vertical` / `— horizontal` | Direction of each axis, set separately. |
+
+### Where settings are stored
+
+Settings are saved on the phone, per computer address, and survive reconnecting, restarting the
+agent, and rebooting the PC. Two phones can hold different settings, which is the point.
+
+They are keyed to the address in the URL, so if the computer's DHCP address changes, the phone
+treats it as a new machine and the tuning appears to be gone. Reserve the address in your router
+to avoid this. If it does happen, re-picking a preset is two taps.
 
 ## Troubleshooting
 
@@ -153,7 +234,11 @@ to the PC; ✕ clears the box locally without sending anything.
   the same non-guest WiFi, and TCP port `8765` is allowed from the trusted LAN. Guest/AP isolation
   can block devices even when the WiFi name looks the same.
 - **Installed phone icon stops connecting** — the computer's DHCP address probably changed.
-  Reserve its address in the router, then scan and install the new URL once.
+  Reserve its address in the router, then scan and install the new URL once. Touch settings are
+  stored per address, so they will look reset after such a change; re-pick a preset.
+- **Phone seems to run an old version after updating the agent** — reload the page once with an
+  extra parameter (`…&r=1`) to force a fresh copy. The page is served `no-store`, so this is only
+  needed for a copy cached before that was added.
 - **macOS moves/clicks do nothing** — grant Accessibility access to the exact Python interpreter
   printed by the installer, then restart the LaunchAgent or sign in again.
 - **Linux reports no display** — launch from a graphical X11 session, not SSH or a TTY.

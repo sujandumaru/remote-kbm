@@ -41,9 +41,20 @@ jobs:
         run: |
           node - <<'JS'
           const html = require("fs").readFileSync("client/index.html", "utf8");
-          const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
-          if (!scripts.length) throw new Error("No inline script found");
+          // Match attributes too, or a block with an id would silently skip this check.
+          const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
+          if (scripts.length < 2) throw new Error(`Expected 2 inline scripts, found ${scripts.length}`);
           for (const script of scripts) new Function(script[1]);
+          JS
+
+      - name: Run SteadyTouch self-check
+        shell: bash
+        run: |
+          node - <<'JS'
+          const html = require("fs").readFileSync("client/index.html", "utf8");
+          const m = html.match(/<script id="steadytouch-core">([\s\S]*?)<\/script>/);
+          if (!m) throw new Error("steadytouch-core block not found");
+          new Function(m[1] + "\nsteadyTouchSelfCheck();")();
           JS
 
       - name: Validate shell installers

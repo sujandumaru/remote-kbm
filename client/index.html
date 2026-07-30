@@ -25,6 +25,7 @@
   button:active { background:#2f3946; }
   #pad { flex:1; touch-action:none; position:relative; background:var(--bg);
          background-image:radial-gradient(var(--pad2) 1px, transparent 1px); background-size:22px 22px; }
+  #pad.held { box-shadow:inset 0 0 0 3px var(--accent); }
   #hint { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
           color:var(--dim); text-align:center; padding:24px; pointer-events:none; }
   #clicks { display:flex; gap:8px; padding:8px 8px 10px; }
@@ -43,6 +44,19 @@
   .keys { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; }
   .keys button { padding:12px 6px; }
   .mod.on { background:var(--accent); }
+  .panel[data-panel="touch"] { max-height:42vh; overflow-y:auto; }
+  .set { display:flex; align-items:center; gap:10px; }
+  .set label { flex:1; color:var(--dim); font-size:13px; }
+  .set input[type=range] { flex:1.2; accent-color:var(--accent); }
+  .set output { width:3.6em; text-align:right; font-variant-numeric:tabular-nums; }
+  #presets { display:flex; gap:6px; }
+  #presets button { flex:1; }
+  .set select { flex:1.2; font:inherit; color:var(--fg); background:var(--pad2);
+                border:0; border-radius:7px; padding:8px; }
+  #dwell { position:absolute; width:46px; height:46px; margin:-23px 0 0 -23px; border-radius:50%;
+           pointer-events:none; background:conic-gradient(var(--accent) var(--p), transparent 0);
+           mask:radial-gradient(transparent 58%, #000 60%);
+           -webkit-mask:radial-gradient(transparent 58%, #000 60%); }
 </style>
 </head>
 <body>
@@ -52,11 +66,15 @@
     <button id="kbtoggle">⌨ Keyboard</button>
   </div>
 
-  <div id="pad"><div id="hint">Drag to move · tap = click · two-finger tap = right-click<br>two-finger drag = scroll · pinch = zoom · double-tap-hold = drag</div></div>
+  <div id="pad">
+    <div id="hint">Drag to move · tap = click · two-finger tap = right-click<br>two-finger drag = scroll · pinch = zoom · press-and-hold = drag</div>
+    <div id="dwell" hidden></div>
+  </div>
 
   <div id="clicks">
     <button id="lclick">Left click</button>
     <button id="rclick">Right click</button>
+    <button id="draglock" class="mod" aria-pressed="false">Drag lock</button>
   </div>
 
   <div id="kb">
@@ -65,6 +83,7 @@
       <button class="tab" data-tab="shortcuts">Shortcuts</button>
       <button class="tab" data-tab="media">Media</button>
       <button class="tab" data-tab="fn">Fn</button>
+      <button class="tab" data-tab="touch">Touch</button>
     </div>
 
     <div class="panel" data-panel="type">
@@ -124,7 +143,141 @@
         <button data-k="f11">F11</button><button data-k="f12">F12</button>
       </div>
     </div>
+
+    <div class="panel" data-panel="touch" hidden>
+      <div id="presets"></div>
+      <div id="settings"></div>
+    </div>
   </div>
+
+<script id="steadytouch-core">
+// Pure functions only — no DOM, no globals — so CI can evaluate this block in node.
+
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+// Simplified One Euro filter: alpha climbs to 1 with speed, so a flick adds no latency.
+function makeTremorFilter(get) {
+  let sx = 0, sy = 0, cx = 0, cy = 0;
+  return {
+    step(dx, dy) {
+      const s = get();
+      const speed = Math.hypot(dx, dy);
+      if (speed < s.DEADZONE) return { dx: 0, dy: 0 };
+      const t = clamp((speed - s.SMOOTH_LO) / Math.max(s.SMOOTH_HI - s.SMOOTH_LO, 1e-6), 0, 1);
+      // Alpha 0 would repeat the last output forever, so a slow drag emits nothing.
+      const alpha = s.SMOOTH_MIN + (1 - s.SMOOTH_MIN) * t;
+      sx = alpha * dx + (1 - alpha) * sx;
+      sy = alpha * dy + (1 - alpha) * sy;
+      const gain = Math.min(s.GAIN_MIN + speed * s.ACCEL, s.GAIN_MAX);
+      cx += sx * gain; cy += sy * gain;
+      const ox = Math.round(cx), oy = Math.round(cy);
+      cx -= ox; cy -= oy;   // keep the residual, or sub-pixel movement rounds away to nothing
+      return { dx: ox, dy: oy };
+    },
+    reset() { sx = sy = cx = cy = 0; },
+  };
+}
+
+// Leaving the radius re-anchors and re-arms, so one rest cannot produce two clicks.
+function makeDwellDetector(get) {
+  let ax = 0, ay = 0, t0 = 0, armed = false, fired = false;
+  return {
+    step(x, y, now) {
+      const s = get();
+      if (!armed || Math.hypot(x - ax, y - ay) > s.DWELL_PX) {
+        ax = x; ay = y; t0 = now; armed = true; fired = false;
+        return { progress: 0, fire: false };
+      }
+      if (fired) return { progress: 1, fire: false };
+      const progress = clamp((now - t0) / Math.max(s.DWELL_MS, 1), 0, 1);
+      fired = progress >= 1;
+      return { progress, fire: fired };
+    },
+    reset() { armed = false; fired = false; },
+  };
+}
+
+// The only path that emits a click, so a gesture that pressed the button can never also click —
+// Windows reads a click followed by a drag as a double-click, which resizes window borders.
+function tapButton(g, s) {
+  if (g.dragged || g.dragLocked) return null;
+  if (g.moved >= s.TAP_PX || g.dur >= s.TAP_MS) return null;
+  return g.maxN === 1 ? "left" : g.maxN === 2 ? "right" : null;
+}
+
+function steadyTouchSelfCheck() {
+  const ok = (cond, msg) => { if (!cond) throw new Error("steadytouch: " + msg); };
+  const tap = o => tapButton({ dragged: false, dragLocked: false, moved: 0, dur: 0, maxN: 1, ...o },
+                             { TAP_PX: 10, TAP_MS: 250 });
+  ok(tap({}) === "left", "a still, quick one-finger tap is a left click");
+  ok(tap({ maxN: 2 }) === "right", "two fingers tap right");
+  ok(tap({ dragged: true }) === null, "a drag must not also emit a click");
+  ok(tap({ dragLocked: true }) === null, "taps are suppressed while the button is latched");
+  ok(tap({ moved: 10 }) === null, "travel past TAP_PX is a move, not a tap");
+  ok(tap({ dur: 250 }) === null, "a touch held past TAP_MS is not a tap");
+  ok(tap({ maxN: 3 }) === null, "three fingers click nothing");
+  // Unity gain keeps the assertions about the filter, not about acceleration.
+  const base = { GAIN_MIN: 1, GAIN_MAX: 1, ACCEL: 0, DEADZONE: 0,
+                 SMOOTH_LO: 1, SMOOTH_HI: 10, SMOOTH_MIN: 0.1 };
+  const filt = s => makeTremorFilter(() => Object.assign({}, base, s));
+
+  const f0 = filt();
+  for (let i = 0; i < 5; i++) {
+    const o = f0.step(0, 0);
+    ok(o.dx === 0 && o.dy === 0, "zero input must emit nothing");
+  }
+
+  const f1 = filt();
+  let last = null;
+  for (let i = 0; i < 30; i++) last = f1.step(20, -20);
+  ok(Math.abs(last.dx - 20) <= 1 && Math.abs(last.dy + 20) <= 1,
+     `fast input must pass through within 1px, got ${last.dx},${last.dy}`);
+
+  const f2 = filt();
+  let out = 0;
+  for (let i = 0; i < 40; i++) out += Math.abs(f2.step(i % 2 ? 2 : -2, 0).dx);
+  ok(out < 40 * 2, `low-speed jitter must be damped, travel was ${out} of 80`);
+
+  const f3 = filt({ SMOOTH_MIN: 1 });
+  let moved = 0;
+  for (let i = 0; i < 20; i++) moved += f3.step(0.3, 0).dx;
+  ok(moved > 0, "repeated sub-pixel input must eventually emit movement");
+
+  const f4 = filt({ DEADZONE: 1, SMOOTH_MIN: 1 });
+  let sum = 0;
+  for (let i = 0; i < 20; i++) sum += Math.abs(f4.step(0.5, 0.5).dx);
+  ok(sum === 0, "input below the dead zone must emit nothing");
+
+  const f5 = filt({ SMOOTH_MIN: 1 });
+  f5.step(0.4, 0.4); f5.reset();
+  ok(f5.step(0.4, 0.4).dx === 0, "reset must clear the sub-pixel carry");
+
+  const dwell = () => makeDwellDetector(() => ({ DWELL_MS: 100, DWELL_PX: 5 }));
+  const fires = (d, pts) => pts.filter(([x, y, t]) => d.step(x, y, t).fire).length;
+
+  ok(fires(dwell(), [[0, 0, 0], [0, 0, 50], [0, 0, 99]]) === 0,
+     "dwell must not fire before DWELL_MS");
+  ok(fires(dwell(), [[0, 0, 0], [0, 0, 50], [0, 0, 100], [0, 0, 150], [0, 0, 900]]) === 1,
+     "dwell must fire exactly once while the finger rests");
+  ok(fires(dwell(), [[0, 0, 0], [20, 0, 50], [40, 0, 100], [60, 0, 150]]) === 0,
+     "dwell must not fire while the finger is moving");
+
+  const d3 = dwell();
+  ok(fires(d3, [[0, 0, 0], [0, 0, 100]]) === 1 &&
+     fires(d3, [[50, 0, 150], [50, 0, 260]]) === 1,
+     "dwell must re-arm after leaving the radius");
+
+  const d4 = dwell();
+  d4.step(0, 0, 0);
+  ok(d4.step(3, 3, 100).fire, "drift inside DWELL_PX must still fire");
+
+  const d5 = dwell();
+  d5.step(0, 0, 0); d5.reset();
+  ok(!d5.step(0, 0, 100).fire, "reset must disarm the pending dwell");
+
+  console.log("steadytouch self-check OK");
+}
+</script>
 
 <script>
 const token = new URLSearchParams(location.search).get("k") || localStorage.getItem("kbm-token") || "";
@@ -141,8 +294,13 @@ function connect() {
   clearTimeout(retryT);
   stat.textContent = "connecting…";
   ws = new WebSocket(`ws://${location.host}/ws?k=${encodeURIComponent(token)}`);
-  ws.onopen  = () => { dot.classList.add("on");  stat.textContent = "connected"; localStorage.setItem("kbm-token", token); };
-  ws.onclose = () => { dot.classList.remove("on"); diagnose(); retryT = setTimeout(connect, 1500); };
+  ws.onopen  = () => {
+    dot.classList.add("on");  stat.textContent = "connected"; localStorage.setItem("kbm-token", token);
+    // Clear any button a previous session left held; releasing an unpressed button is a no-op.
+    send({ t: "release", b: "left" });
+    setDragLock(false, false);
+  };
+  ws.onclose = () => { endDrag(); setDragLock(false, false); dot.classList.remove("on"); diagnose(); retryT = setTimeout(connect, 1500); };
   ws.onerror = () => ws.close();
 }
 async function diagnose() {
@@ -179,17 +337,181 @@ async function keepAwake() {
   if (sleepVid.paused) sleepVid.play().catch(() => {});
 }
 document.addEventListener("pointerdown", () => keepAwake());
-document.addEventListener("visibilitychange", () => { if (!document.hidden) { wakeLock = null; keepAwake(); } });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { wakeLock = null; keepAwake(); return; }
+  // Backgrounding mid-drag would leave the button held on the PC.
+  endDrag();
+  if (dragLocked) setDragLock(false);
+  stopDwell();
+});
 
-// Trackpad-style acceleration: slow finger stays precise, fast flick crosses the screen.
-const GAIN_MIN = 1.6, GAIN_MAX = 5.0, ACCEL = 0.10;
-const TAP_MS = 250, TAP_PX = 10, DBL_MS = 300;
-const SCROLL_PX = 12, ZOOM_PX = 45, ACTIVATE_PX = 5, ZOOM_ACTIVATE_PX = 12;
-const ZOOM_DECISION_MS = 40, MODE_BIAS = 1.15, NATURAL = true;
+// The Default preset. SMOOTH_MIN 1 with DEADZONE 0 makes the tremor filter transparent.
+const DEFAULTS = {
+  GAIN_MIN: 1.6, GAIN_MAX: 5.0, ACCEL: 0.10,
+  TAP_MS: 250, TAP_PX: 10,
+  HOLD_ON: true, HOLD_MS: 500, HOLD_PX: 12,
+  SCROLL_PX: 12, ZOOM_PX: 45, ACTIVATE_PX: 5, ZOOM_ACTIVATE_PX: 12,
+  ZOOM_DECISION_MS: 40, MODE_BIAS: 1.15, NATURAL_V: true, NATURAL_H: true,
+  DEADZONE: 0, SMOOTH_LO: 1, SMOOTH_HI: 10, SMOOTH_MIN: 1,
+  DWELL_ON: false, DWELL_MS: 800, DWELL_PX: 12, DWELL_BTN: "left",
+};
+const S = { ...DEFAULTS };
+
+// The panel is generated from this: [key, label, min, max, step] for a slider,
+// [key, label] for a checkbox, [key, label, [choices]] for a select.
+const CONTROLS = [
+  ["DWELL_ON", "Dwell click (hold still to click)"],
+  ["DWELL_MS", "Dwell hold time (ms)", 300, 2500, 50],
+  ["DWELL_PX", "Dwell steadiness allowance (px)", 4, 40, 1],
+  ["DWELL_BTN", "Dwell fires", ["left", "right", "middle"]],
+  ["GAIN_MIN", "Slow-move gain", 0.5, 4, 0.1],
+  ["GAIN_MAX", "Fast-flick gain", 1, 10, 0.1],
+  ["ACCEL", "Acceleration", 0, 0.3, 0.01],
+  ["TAP_MS", "Tap time limit (ms)", 100, 800, 10],
+  ["TAP_PX", "Tap wobble allowance (px)", 4, 40, 1],
+  ["HOLD_ON", "Press-and-hold to drag"],
+  ["HOLD_MS", "Hold time before drag (ms)", 200, 1500, 50],
+  ["HOLD_PX", "Hold wobble allowance (px)", 4, 40, 1],
+  ["SCROLL_PX", "Scroll step (px)", 4, 40, 1],
+  ["ZOOM_PX", "Zoom step (px)", 15, 120, 5],
+  ["ACTIVATE_PX", "Scroll dead zone (px)", 1, 20, 1],
+  ["ZOOM_ACTIVATE_PX", "Pinch dead zone (px)", 4, 40, 1],
+  ["ZOOM_DECISION_MS", "Pinch decision delay (ms)", 0, 150, 5],
+  ["MODE_BIAS", "Scroll-vs-pinch bias", 1, 2, 0.05],
+  ["DEADZONE", "Tremor dead zone (px)", 0, 3, 0.1],
+  ["SMOOTH_MIN", "Steadiness (1 = off)", 0.05, 1, 0.05],
+  ["SMOOTH_LO", "Steadying starts below (px)", 0, 6, 0.5],
+  ["SMOOTH_HI", "Full speed passes through (px)", 2, 30, 1],
+  ["NATURAL_V", "Natural scroll — vertical"],
+  ["NATURAL_H", "Natural scroll — horizontal"],
+];
+
+const PRESETS = {
+  Default: {},
+  Precision: { GAIN_MIN: 1.0, GAIN_MAX: 2.5, ACCEL: 0.05, ACTIVATE_PX: 3, ZOOM_ACTIVATE_PX: 8,
+               DEADZONE: 0.3, SMOOTH_MIN: 0.5, SMOOTH_LO: 1, SMOOTH_HI: 8 },
+  Accessibility: { GAIN_MIN: 1.2, GAIN_MAX: 3.0, ACCEL: 0.06, TAP_MS: 500, TAP_PX: 22,
+                   HOLD_MS: 800, HOLD_PX: 20,
+                   DEADZONE: 0.8, SMOOTH_MIN: 0.12, SMOOTH_LO: 0.5, SMOOTH_HI: 12,
+                   DWELL_ON: true, DWELL_MS: 900, DWELL_PX: 16 },
+};
+
+const CHOICES = Object.fromEntries(
+  CONTROLS.filter(c => Array.isArray(c[2])).map(([k, , choices]) => [k, choices]));
+
+// ponytail: localStorage is per-origin, so a DHCP change loses tuning; presets recover in 2 taps.
+function loadSettings() {
+  let o = {};
+  try { o = JSON.parse(localStorage.getItem("kbm-settings")) || {}; } catch (e) { /* corrupt → defaults */ }
+  for (const k in DEFAULTS) {
+    if (typeof o[k] !== typeof DEFAULTS[k]) continue;
+    if (CHOICES[k] && !CHOICES[k].includes(o[k])) continue;
+    S[k] = o[k];
+  }
+}
+function saveSettings() { try { localStorage.setItem("kbm-settings", JSON.stringify(S)); } catch (e) {} }
+
+function buildSettings() {
+  const box = document.getElementById("settings");
+  for (const [k, label, min, max, step] of CONTROLS) {
+    const row = document.createElement("div");
+    row.className = "set";
+    row.innerHTML = `<label for="s-${k}">${label}</label>` + (
+      CHOICES[k] ? `<select id="s-${k}">${CHOICES[k].map(c => `<option>${c}</option>`).join("")}</select>`
+      : typeof DEFAULTS[k] === "boolean" ? `<input type="checkbox" id="s-${k}">`
+      : `<input type="range" id="s-${k}" min="${min}" max="${max}" step="${step}"><output></output>`);
+    const input = row.querySelector("input,select");
+    input.oninput = () => {
+      S[k] = CHOICES[k] ? input.value
+           : input.type === "checkbox" ? input.checked
+           : parseFloat(input.value);
+      const out = row.querySelector("output");
+      if (out) out.textContent = S[k];
+      saveSettings();
+    };
+    box.appendChild(row);
+  }
+  syncSettings();
+}
+function syncSettings() {
+  for (const [k] of CONTROLS) {
+    const input = document.getElementById(`s-${k}`);
+    if (input.type === "checkbox") input.checked = S[k];
+    else input.value = S[k];
+    const out = input.nextElementSibling;
+    if (out && out.tagName === "OUTPUT") out.textContent = S[k];
+  }
+}
+function buildPresets() {
+  const box = document.getElementById("presets");
+  for (const [name, over] of Object.entries(PRESETS)) {
+    const b = document.createElement("button");
+    b.textContent = name;
+    b.onclick = () => { Object.assign(S, DEFAULTS, over); saveSettings(); syncSettings(); };
+    box.appendChild(b);
+  }
+}
+loadSettings(); buildPresets(); buildSettings();
+
+const tremor = makeTremorFilter(() => S);
+const dwellDet = makeDwellDetector(() => S);
 const pad = document.getElementById("pad");
+const ring = document.getElementById("dwell");
+const draglock = document.getElementById("draglock");
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const pts = new Map();
 let g = null;
-let lastTapUp = 0, dragging = false, armedDrag = false;
+let dragging = false, dragLocked = false;
+let dwellRAF = 0, padRect = null, holdTimer = 0;
+
+// Press-and-hold, not double-tap-then-hold: a double tap must send a click before its press,
+// and Windows reads that pair as a double-click, which resizes the window instead of dragging.
+function armHold() {
+  if (!S.HOLD_ON || dragLocked || dragging) return;
+  holdTimer = setTimeout(() => {
+    holdTimer = 0;
+    send({ t: "press", b: "left" });
+    dragging = true;
+    pad.classList.add("held");
+    navigator.vibrate?.(15);
+  }, S.HOLD_MS);
+}
+function cancelHold() {
+  clearTimeout(holdTimer);
+  holdTimer = 0;
+}
+function endDrag() {
+  cancelHold();
+  pad.classList.remove("held");
+  if (dragging) { send({ t: "release", b: "left" }); dragging = false; }
+}
+
+function setDragLock(on, notify = true) {
+  dragLocked = on;
+  draglock.classList.toggle("on", on);
+  draglock.setAttribute("aria-pressed", String(on));
+  if (notify) send({ t: on ? "press" : "release", b: "left" });
+}
+draglock.onclick = () => setDragLock(!dragLocked);
+
+function stopDwell() {
+  cancelAnimationFrame(dwellRAF);
+  dwellRAF = 0;
+  dwellDet.reset();
+  ring.hidden = true;
+}
+function dwellTick() {
+  if (pts.size !== 1 || !S.DWELL_ON || dragLocked || dragging) { stopDwell(); return; }
+  const p = pts.values().next().value;
+  const { progress, fire } = dwellDet.step(p.x, p.y, performance.now());
+  const shown = reduceMotion.matches ? Math.floor(progress * 4) / 4 : progress;
+  ring.style.left = `${p.x - padRect.left}px`;
+  ring.style.top = `${p.y - padRect.top}px`;
+  ring.style.setProperty("--p", `${shown * 360}deg`);
+  ring.hidden = false;
+  if (fire) send({ t: "click", b: S.DWELL_BTN, n: 1 });
+  dwellRAF = requestAnimationFrame(dwellTick);
+}
 let lastCentroid = null, lastDist = 0, twoStarted = 0, twoMode = null;
 let scrollAcc = 0, panAcc = 0, zoomAcc = 0;
 
@@ -201,10 +523,13 @@ pad.addEventListener("pointerdown", e => {
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY, px: e.clientX, py: e.clientY });
   if (pts.size === 1) {
     g = { start: performance.now(), maxN: 1, moved: 0 };
-    armedDrag = (performance.now() - lastTapUp) < DBL_MS;
+    tremor.reset();
+    armHold();
+    if (S.DWELL_ON) { padRect = pad.getBoundingClientRect(); dwellTick(); }
   }
   g.maxN = Math.max(g.maxN, pts.size);
   if (pts.size === 2) {
+    cancelHold();
     lastCentroid = centroid(); const a = [...pts.values()]; lastDist = dist(a[0], a[1]);
     twoStarted = performance.now(); twoMode = null; scrollAcc = panAcc = zoomAcc = 0;
   }
@@ -217,10 +542,10 @@ pad.addEventListener("pointermove", e => {
   if (pts.size === 1) {
     const dx = p.x - p.px, dy = p.y - p.py; p.px = p.x; p.py = p.y;
     g.moved += Math.hypot(dx, dy);
-    if (armedDrag && g.moved > TAP_PX) { send({ t: "press", b: "left" }); dragging = true; armedDrag = false; }
+    if (holdTimer && g.moved > S.HOLD_PX) cancelHold();
     if (dx || dy) {
-      const gain = Math.min(GAIN_MIN + Math.hypot(dx, dy) * ACCEL, GAIN_MAX);
-      send({ t: "move", dx: Math.round(dx * gain), dy: Math.round(dy * gain) });
+      const o = tremor.step(dx, dy);
+      if (o.dx || o.dy) send({ t: "move", dx: o.dx, dy: o.dy });
     }
   } else if (pts.size === 2) {
     const c = centroid(), a = [...pts.values()], d = dist(a[0], a[1]);
@@ -231,19 +556,19 @@ pad.addEventListener("pointermove", e => {
     scrollAcc += dcy; panAcc += dcx; zoomAcc += dd;
     if (!twoMode) {
       const panTravel = Math.hypot(panAcc, scrollAcc), pinchTravel = Math.abs(zoomAcc);
-      if (panTravel >= ACTIVATE_PX && panTravel * MODE_BIAS >= pinchTravel) {
+      if (panTravel >= S.ACTIVATE_PX && panTravel * S.MODE_BIAS >= pinchTravel) {
         twoMode = "scroll";
-      } else if (performance.now() - twoStarted >= ZOOM_DECISION_MS &&
-                 pinchTravel >= ZOOM_ACTIVATE_PX && pinchTravel > panTravel * MODE_BIAS) {
+      } else if (performance.now() - twoStarted >= S.ZOOM_DECISION_MS &&
+                 pinchTravel >= S.ZOOM_ACTIVATE_PX && pinchTravel > panTravel * S.MODE_BIAS) {
         // Wait for both fingers before classifying a distance change as pinch.
         twoMode = "zoom";
       }
     }
     if (twoMode === "scroll") {
-      while (Math.abs(scrollAcc) >= SCROLL_PX) { const s = Math.sign(scrollAcc); send({ t: "scroll", dx: 0, dy: NATURAL ? s : -s }); scrollAcc -= s * SCROLL_PX; }
-      while (Math.abs(panAcc) >= SCROLL_PX) { const s = Math.sign(panAcc); send({ t: "scroll", dx: NATURAL ? s : -s, dy: 0 }); panAcc -= s * SCROLL_PX; }
+      while (Math.abs(scrollAcc) >= S.SCROLL_PX) { const s = Math.sign(scrollAcc); send({ t: "scroll", dx: 0, dy: S.NATURAL_V ? s : -s }); scrollAcc -= s * S.SCROLL_PX; }
+      while (Math.abs(panAcc) >= S.SCROLL_PX) { const s = Math.sign(panAcc); send({ t: "scroll", dx: S.NATURAL_H ? s : -s, dy: 0 }); panAcc -= s * S.SCROLL_PX; }
     } else if (twoMode === "zoom") {
-      while (Math.abs(zoomAcc) >= ZOOM_PX) { const s = Math.sign(zoomAcc); send({ t: "zoom", d: s }); zoomAcc -= s * ZOOM_PX; }
+      while (Math.abs(zoomAcc) >= S.ZOOM_PX) { const s = Math.sign(zoomAcc); send({ t: "zoom", d: s }); zoomAcc -= s * S.ZOOM_PX; }
     }
   }
 });
@@ -253,13 +578,12 @@ function endPointer(e) {
   pts.delete(e.pointerId);
   if (pts.size === 1) { const p = [...pts.values()][0]; p.px = p.x; p.py = p.y; }  // avoid jump on 2->1
   if (pts.size > 0) return;
-  const dur = performance.now() - g.start;
-  if (dragging) { send({ t: "release", b: "left" }); dragging = false; }
-  else if (g.moved < TAP_PX && dur < TAP_MS) {
-    if (g.maxN === 1) { send({ t: "click", b: "left", n: 1 }); lastTapUp = performance.now(); }
-    else if (g.maxN === 2) send({ t: "click", b: "right", n: 1 });
-  }
-  armedDrag = false; g = null;
+  stopDwell();
+  const gesture = { ...g, dur: performance.now() - g.start, dragged: dragging, dragLocked };
+  endDrag();
+  const b = tapButton(gesture, S);
+  if (b) send({ t: "click", b, n: 1 });
+  g = null;
 }
 pad.addEventListener("pointerup", endPointer);
 pad.addEventListener("pointercancel", endPointer);
