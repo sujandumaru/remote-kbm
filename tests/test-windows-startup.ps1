@@ -18,11 +18,21 @@ if (-not $PythonPath) {
 }
 
 $basePythonPath = & $PythonPath -c "import sys; print(sys._base_executable)"
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($basePythonPath)) {
+    throw "Could not discover the base Windows Python executable."
+}
+$basePythonPath = $basePythonPath.Trim()
 $basePythonwPath = Join-Path (Split-Path -Parent $basePythonPath) "pythonw.exe"
-$sitePackagesPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PythonPath)) `
-    "Lib\site-packages"
+$sitePackagesPath = & $PythonPath -c "import sysconfig; print(sysconfig.get_path('purelib'))"
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sitePackagesPath)) {
+    throw "Could not discover the Windows Python package directory."
+}
+$sitePackagesPath = $sitePackagesPath.Trim()
 if (-not (Test-Path -LiteralPath $basePythonwPath)) {
     throw "Base pythonw.exe was not found at $basePythonwPath"
+}
+if (-not (Test-Path -LiteralPath $sitePackagesPath -PathType Container)) {
+    throw "Python package directory was not found at $sitePackagesPath"
 }
 
 $testRoot = Join-Path $env:TEMP (
