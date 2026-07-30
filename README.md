@@ -109,10 +109,11 @@ can't drive your machine. The token is saved to `~/.remote-kbm-token` (on Window
 
 **Install as an app:** open the page **via the QR link**, then use the browser menu →
 *Add to Home Screen* (Android Chrome: *Install app*). It launches fullscreen with its own
-icon and the token baked in — no rescanning. While you use it, the page keeps your phone
-screen awake. If it ever shows *disconnected*, the status text says why (agent not running /
-wrong WiFi / stale token) — tap it to retry; after rotating the token, remove and re-add the
-app.
+icon and the token baked in — no rescanning. While you use it, the page requests a screen wake
+lock. Reliable browser wake locks require HTTPS, so the LAN HTTP page uses a bundled media
+fallback that phone battery-saving modes can still override. If it ever shows *disconnected*,
+the status text says why (agent not running / wrong WiFi / stale token) — tap it to retry; after
+rotating the token, remove and re-add the app.
 
 On iPhone, use Safari's **Share → Add to Home Screen**. On Android, use Chrome's
 **⋮ → Install app** or **Add to Home screen**. After desktop sign-in, opening that icon reconnects

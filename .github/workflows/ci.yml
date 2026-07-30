@@ -46,6 +46,8 @@ jobs:
           for (const script of scripts) new Function(script[1]);
           JS
           node tests/test-client-connection.js
+          node tests/test-client-input.js
+          node tests/test-client-wake-lock.js
 
       - name: Validate shell installers
         if: runner.os != 'Windows'
