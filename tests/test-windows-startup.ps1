@@ -6,8 +6,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$runnerPath = Join-Path $projectRoot "windows\run-at-login.ps1"
 $installerPath = Join-Path $projectRoot "windows\install-startup.ps1"
+$launcherPath = Join-Path $projectRoot "windows\launch-background.pyw"
 
 if (-not $PythonPath) {
     $pythonCommand = Get-Command python.exe -ErrorAction SilentlyContinue
@@ -17,73 +17,90 @@ if (-not $PythonPath) {
     $PythonPath = $pythonCommand.Source
 }
 
-if (-not (Test-Path -LiteralPath $PythonPath)) {
-    throw "Windows Python was not found at $PythonPath"
+$basePythonPath = & $PythonPath -c "import sys; print(sys._base_executable)"
+$basePythonwPath = Join-Path (Split-Path -Parent $basePythonPath) "pythonw.exe"
+$sitePackagesPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PythonPath)) `
+    "Lib\site-packages"
+if (-not (Test-Path -LiteralPath $basePythonwPath)) {
+    throw "Base pythonw.exe was not found at $basePythonwPath"
 }
 
 $testRoot = Join-Path $env:TEMP (
     "remote-kbm-startup-test-" + [guid]::NewGuid().ToString("N")
 )
 $fakeProjectRoot = Join-Path $testRoot "project"
-$serverDirectory = Join-Path $fakeProjectRoot "server"
-$serverPath = Join-Path $serverDirectory "main.py"
-$testLocalAppData = Join-Path $testRoot "local"
-$logPath = Join-Path $testLocalAppData "remote-kbm\server.log"
+$fakeServerDirectory = Join-Path $fakeProjectRoot "server"
+$fakeClientDirectory = Join-Path $fakeProjectRoot "client"
+$fakeServerPath = Join-Path $fakeServerDirectory "main.py"
 
-function Invoke-TestRunner {
-    $savedLocalAppData = $env:LOCALAPPDATA
-    try {
-        $env:LOCALAPPDATA = $testLocalAppData
-        & powershell.exe `
-            -NoLogo `
-            -NoProfile `
-            -NonInteractive `
-            -ExecutionPolicy Bypass `
-            -File $runnerPath `
-            -ProjectRoot $fakeProjectRoot `
-            -PythonPath $PythonPath
-        return $LASTEXITCODE
-    } finally {
-        $env:LOCALAPPDATA = $savedLocalAppData
+function Invoke-WindowlessServer {
+    param(
+        [string]$LogPath,
+        [switch]$ShowConnect
+    )
+
+    $arguments = '-S "{0}" "{1}" "{2}" "{3}"' -f `
+        $launcherPath, $sitePackagesPath, $fakeServerPath, $LogPath
+    if ($ShowConnect) {
+        $arguments += " --show-connect"
     }
+    return Start-Process `
+        -FilePath $basePythonwPath `
+        -ArgumentList $arguments `
+        -Wait `
+        -PassThru
 }
 
 try {
-    New-Item -ItemType Directory -Path $serverDirectory -Force | Out-Null
+    New-Item `
+        -ItemType Directory `
+        -Path $fakeServerDirectory, $fakeClientDirectory `
+        -Force | Out-Null
+    Copy-Item `
+        -Path (Join-Path $projectRoot "server\*.py") `
+        -Destination $fakeServerDirectory
+    Copy-Item `
+        -Path (Join-Path $projectRoot "client\*") `
+        -Destination $fakeClientDirectory `
+        -Recurse
 
-    Set-Content `
-        -LiteralPath $serverPath `
-        -Value 'import logging; logging.warning("expected test message")' `
-        -Encoding UTF8
-    $successExitCode = Invoke-TestRunner
-    $successLog = Get-Content -LiteralPath $logPath -Raw -Encoding UTF8
+    $successLogPath = Join-Path $testRoot "success.log"
+    $successProcess = Invoke-WindowlessServer `
+        -LogPath $successLogPath `
+        -ShowConnect
+    $successLog = Get-Content -LiteralPath $successLogPath -Raw -Encoding UTF8
 
-    if ($successExitCode -ne 0) {
-        throw "Ordinary Python logging caused runner exit code $successExitCode."
+    if ($successProcess.ExitCode -ne 0) {
+        throw "Windowless logging exited with code $($successProcess.ExitCode)."
     }
-    if ($successLog -notmatch "expected test message" -or
-        $successLog -match "NativeCommandError") {
-        throw "The runner did not preserve clean Python log output."
+    if ($successLog -notmatch "http://") {
+        throw "Windowless logging did not preserve the connection URL."
     }
-    Write-Host "Startup runner success path passed."
+    Write-Host "Windowless startup success path passed."
 
-    Set-Content `
-        -LiteralPath $serverPath `
-        -Value 'import sys; print("expected startup failure", file=sys.stderr); sys.exit(23)' `
-        -Encoding UTF8
-    $failureExitCode = Invoke-TestRunner
-    $failureLog = Get-Content -LiteralPath $logPath -Raw -Encoding UTF8
-
-    if ($failureExitCode -ne 23) {
-        throw "The runner returned $failureExitCode instead of the Python exit code 23."
+    $failureLogPath = Join-Path $testRoot "failure.log"
+    $portBlocker = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Any,
+        8765
+    )
+    $portBlocker.Start()
+    try {
+        $failureProcess = Invoke-WindowlessServer -LogPath $failureLogPath
+    } finally {
+        $portBlocker.Stop()
     }
-    if ($failureLog -notmatch "expected startup failure" -or
-        $failureLog -notmatch "remote-kbm exited with code 23") {
-        throw "The runner did not record the expected startup failure."
+    $failureLog = Get-Content -LiteralPath $failureLogPath -Raw -Encoding UTF8
+
+    if ($failureProcess.ExitCode -eq 0) {
+        throw "The server unexpectedly started while port 8765 was unavailable."
+    }
+    if ($failureLog -notmatch "Traceback" -or
+        $failureLog -notmatch "8765") {
+        throw "The windowless server did not record its startup failure."
     }
 
-    Write-Host "Expected runner failure captured:"
-    Get-Content -LiteralPath $logPath -Tail 3 -Encoding UTF8 |
+    Write-Host "Expected windowless startup failure captured:"
+    Get-Content -LiteralPath $failureLogPath -Tail 8 -Encoding UTF8 |
         ForEach-Object { Write-Host "  $_" }
 
     $brokenProjectRoot = Join-Path $testRoot "broken-project"
@@ -112,7 +129,7 @@ try {
     if ($installerExitCode -eq 0) {
         throw "The incomplete installation unexpectedly succeeded."
     }
-    if ($installerText -notmatch "Startup runner not found") {
+    if ($installerText -notmatch "Requirements file not found") {
         throw "The installer failure was not printed in the terminal output."
     }
 

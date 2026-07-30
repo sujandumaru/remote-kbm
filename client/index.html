@@ -129,7 +129,7 @@
 <script>
 const token = new URLSearchParams(location.search).get("k") || localStorage.getItem("kbm-token") || "";
 const dot = document.getElementById("dot"), stat = document.getElementById("stat");
-let ws, retryT = null;
+let ws = null, retryT = null, connectionId = 0;
 
 // The generated manifest preserves the token when launched from a home screen.
 const mlink = document.createElement("link");
@@ -139,24 +139,43 @@ document.head.appendChild(mlink);
 
 function connect() {
   clearTimeout(retryT);
+  retryT = null;
+  const id = ++connectionId, previous = ws;
+  ws = null;
+  if (previous && previous.readyState < WebSocket.CLOSING) previous.close();
+  dot.classList.remove("on");
   stat.textContent = "connecting…";
-  ws = new WebSocket(`ws://${location.host}/ws?k=${encodeURIComponent(token)}`);
-  ws.onopen  = () => { dot.classList.add("on");  stat.textContent = "connected"; localStorage.setItem("kbm-token", token); };
-  ws.onclose = () => { dot.classList.remove("on"); diagnose(); retryT = setTimeout(connect, 1500); };
-  ws.onerror = () => ws.close();
+  const socket = new WebSocket(`ws://${location.host}/ws?k=${encodeURIComponent(token)}`);
+  ws = socket;
+  socket.onopen = () => {
+    if (id !== connectionId || socket !== ws) { socket.close(); return; }
+    dot.classList.add("on");
+    stat.textContent = "connected";
+    localStorage.setItem("kbm-token", token);
+  };
+  socket.onclose = () => {
+    if (id !== connectionId || socket !== ws) return;
+    ws = null;
+    dot.classList.remove("on");
+    stat.textContent = "reconnecting…";
+    diagnose(id);
+    retryT = setTimeout(() => { if (id === connectionId) connect(); }, 1500);
+  };
+  socket.onerror = () => socket.close();
 }
-async function diagnose() {
+async function diagnose(id) {
   let why = "reconnecting…";
   if (!token) why = "no token — open the QR link once";
   else try {
     const r = await fetch(`/ping?k=${encodeURIComponent(token)}`);
     if (!r.ok) why = "wrong token — rescan the QR";
   } catch (e) { why = "PC unreachable — agent on? same WiFi?"; }
+  if (id !== connectionId || (ws && ws.readyState === WebSocket.OPEN)) return;
   stat.textContent = why + " (tap to retry)";
 }
 stat.addEventListener("click", connect);
 dot.addEventListener("click", connect);
-function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+function send(m) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); }
 connect();
 
 // Wake Lock API needs a secure context, which a plain-http LAN origin is not —
@@ -164,7 +183,7 @@ connect();
 let wakeLock = null, sleepVid = null;
 async function keepAwake() {
   if (navigator.wakeLock) {
-    try { wakeLock = wakeLock || await navigator.wakeLock.request("screen"); return; } catch (e) { /* fall through */ }
+    try { wakeLock = wakeLock || await navigator.wakeLock.request("screen"); return; } catch (e) {}
   }
   if (!sleepVid) {
     sleepVid = document.createElement("video");
@@ -181,7 +200,6 @@ async function keepAwake() {
 document.addEventListener("pointerdown", () => keepAwake());
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { wakeLock = null; keepAwake(); } });
 
-// Trackpad-style acceleration: slow finger stays precise, fast flick crosses the screen.
 const GAIN_MIN = 1.6, GAIN_MAX = 5.0, ACCEL = 0.10;
 const TAP_MS = 250, TAP_PX = 10, DBL_MS = 300;
 const SCROLL_PX = 12, ZOOM_PX = 45, ACTIVATE_PX = 5, ZOOM_ACTIVATE_PX = 12;

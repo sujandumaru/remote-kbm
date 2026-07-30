@@ -45,6 +45,7 @@ jobs:
           if (!scripts.length) throw new Error("No inline script found");
           for (const script of scripts) new Function(script[1]);
           JS
+          node tests/test-client-connection.js
 
       - name: Validate shell installers
         if: runner.os != 'Windows'

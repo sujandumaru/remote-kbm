@@ -9,14 +9,15 @@ import json
 import logging
 import secrets
 import socket
+import sys
 from pathlib import Path
-
-import aiohttp
-from aiohttp import web
 
 from runtime_check import check_runtime, describe_runtime
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+LOG_FORMAT = "%(levelname)s %(name)s: %(message)s"
+MAX_LOG_BYTES = 5 * 1024 * 1024
+
+logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 log = logging.getLogger("main")
 
 PORT = 8765
@@ -40,8 +41,28 @@ def load_token():
     return t
 
 
-TOKEN = load_token()
+TOKEN = None
 inject = None
+aiohttp = None
+web = None
+
+
+def configure_file_output(path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.exists() and path.stat().st_size > MAX_LOG_BYTES:
+            backup = path.with_name(path.name + ".1")
+            backup.unlink(missing_ok=True)
+            path.replace(backup)
+    except OSError:
+        pass
+
+    stream = path.open("a", encoding="utf-8", errors="backslashreplace", buffering=1)
+    sys.stdout = stream
+    sys.stderr = stream
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, stream=stream, force=True)
+    return stream
 
 
 def lan_ip():
@@ -76,7 +97,9 @@ def print_connection(url):
 
 
 async def index(request):
-    return web.FileResponse(CLIENT_DIR / "index.html")
+    response = web.FileResponse(CLIENT_DIR / "index.html")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 async def manifest(request):
@@ -137,12 +160,28 @@ def main(argv=None):
         action="store_true",
         help="print the saved QR/URL and exit without starting another server",
     )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        help="write output to a file for windowless background startup",
+    )
     args = parser.parse_args(argv)
+    if args.log_file:
+        configure_file_output(args.log_file)
+
+    global TOKEN
+    TOKEN = load_token()
     if args.show_connect:
         print_connection(connect_url())
         return
 
-    global inject
+    global aiohttp, inject, web
+    import aiohttp as aiohttp_module
+    from aiohttp import web as web_module
+
+    aiohttp = aiohttp_module
+    web = web_module
+
     try:
         warnings = check_runtime()
     except RuntimeError as e:
@@ -167,7 +206,10 @@ def main(argv=None):
                     web.get("/manifest.json", manifest), web.get("/icon.png", icon),
                     web.get("/ping", ping)])
     url = connect_url()
-    print_connection(url)
+    if args.log_file:
+        log.info("connect URL: %s", url)
+    else:
+        print_connection(url)
     web.run_app(app, host="0.0.0.0", port=PORT, print=None)
 
 

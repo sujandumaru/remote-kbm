@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = "Stop"
 $taskName = "remote-kbm"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$runnerTemplate = Join-Path $PSScriptRoot "run-at-login.ps1"
+$launcherTemplate = Join-Path $PSScriptRoot "launch-background.pyw"
 $sourceServerDirectory = Join-Path $projectRoot "server"
 $sourceClientDirectory = Join-Path $projectRoot "client"
 $requirementsPath = Join-Path $projectRoot "requirements.txt"
@@ -26,16 +26,18 @@ $appDirectory = Join-Path $startupDirectory "app"
 $appServerDirectory = Join-Path $appDirectory "server"
 $appClientDirectory = Join-Path $appDirectory "client"
 $serverPath = Join-Path $appServerDirectory "main.py"
-$runnerPath = Join-Path $startupDirectory "run-at-login.ps1"
+$legacyRunnerPath = Join-Path $startupDirectory "run-at-login.ps1"
+$launcherPath = Join-Path $startupDirectory "launch-background.pyw"
 $logPath = Join-Path $startupDirectory "server.log"
 $venvDirectory = Join-Path $startupDirectory "venv"
 $pythonPath = Join-Path $venvDirectory "Scripts\python.exe"
+$sitePackagesPath = Join-Path $venvDirectory "Lib\site-packages"
 
-if (-not (Test-Path -LiteralPath $runnerTemplate)) {
-    throw "Startup runner not found: $runnerTemplate"
-}
 if (-not (Test-Path -LiteralPath $requirementsPath)) {
     throw "Requirements file not found: $requirementsPath"
+}
+if (-not (Test-Path -LiteralPath $launcherTemplate)) {
+    throw "Windowless launcher not found: $launcherTemplate"
 }
 if (-not (Test-Path -LiteralPath (Join-Path $sourceServerDirectory "main.py")) -or
     -not (Test-Path -LiteralPath (Join-Path $sourceClientDirectory "index.html"))) {
@@ -76,6 +78,14 @@ if (-not $SkipDependencies) {
 } elseif (-not (Test-Path -LiteralPath $pythonPath)) {
     throw "-SkipDependencies was used, but the environment does not exist: $pythonPath"
 }
+if (-not (Test-Path -LiteralPath $sitePackagesPath)) {
+    throw "The Windows Python environment is incomplete: $sitePackagesPath"
+}
+$basePythonPath = & $pythonPath -c "import sys; print(sys._base_executable)"
+$basePythonwPath = Join-Path (Split-Path -Parent $basePythonPath) "pythonw.exe"
+if (-not (Test-Path -LiteralPath $basePythonwPath)) {
+    throw "The base windowless Python executable was not found: $basePythonwPath"
+}
 
 $pythonVersion = & $pythonPath --version 2>&1
 Write-Host "Using $pythonVersion from $pythonPath"
@@ -92,15 +102,15 @@ Copy-Item -Path (Join-Path $sourceClientDirectory "*") `
     -Destination $appClientDirectory `
     -Recurse `
     -Force
+Copy-Item -LiteralPath $launcherTemplate -Destination $launcherPath -Force
 
 $userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$powerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-
-Copy-Item -LiteralPath $runnerTemplate -Destination $runnerPath -Force
-
-$actionArguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -ProjectRoot "{1}" -PythonPath "{2}"' -f $runnerPath, $appDirectory, $pythonPath
-
-$action = New-ScheduledTaskAction -Execute $powerShellPath -Argument $actionArguments
+$actionArguments = '-S "{0}" "{1}" "{2}" "{3}"' -f `
+    $launcherPath, $sitePackagesPath, $serverPath, $logPath
+$action = New-ScheduledTaskAction `
+    -Execute $basePythonwPath `
+    -Argument $actionArguments `
+    -WorkingDirectory $appDirectory
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
 $principal = New-ScheduledTaskPrincipal `
     -UserId $userId `
@@ -115,6 +125,11 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -StartWhenAvailable
 
+$installedTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if ($installedTask) {
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+}
 Register-ScheduledTask `
     -TaskName $taskName `
     -Action $action `
@@ -123,6 +138,7 @@ Register-ScheduledTask `
     -Settings $settings `
     -Description "Start the remote-kbm phone trackpad server for the signed-in user." `
     -Force | Out-Null
+Remove-Item -LiteralPath $legacyRunnerPath -Force -ErrorAction SilentlyContinue
 
 $existingListener = Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue
 if ($existingListener) {

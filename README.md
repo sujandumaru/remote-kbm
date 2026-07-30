@@ -39,7 +39,8 @@ native per-user startup, and prints the QR code when the terminal supports it (t
 printed). The clone can be moved or deleted after installation; rerun the installer after pulling
 updates. No administrator account is required for the startup registration. On Windows, the
 installer also verifies that the background server is listening; if it cannot start, the recent
-startup log is printed in the terminal and the installation exits with an error.
+startup log is printed in the terminal and the installation exits with an error. The scheduled
+task runs `pythonw.exe` directly, so no PowerShell or console window remains open.
 
 Startup happens when the user **signs in**, not before login, because desktop input injection
 must run inside that user's graphical session.
